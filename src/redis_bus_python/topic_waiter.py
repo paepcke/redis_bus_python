@@ -6,7 +6,17 @@ Created on May 19, 2015
 import Queue
 import functools
 import threading
+import uuid
 
+import redis
+
+from redis_bus_python.bus_message import BusMessage
+
+
+#*************
+def tmpCallback(msg):
+    print('Msg to pure func: %s' % str(msg))
+#*************
 
 class _TopicWaiter(threading.Thread):
     '''
@@ -21,7 +31,7 @@ class _TopicWaiter(threading.Thread):
     
     TOPIC_WAITER_STOPPED_CHECK_INTERVAL = 5 # seconds
 
-    def __init__(self, busAdapter):
+    def __init__(self, busAdapter, host='localhost', port=6379, db=0):
         '''
         Initialize list of callback functions. Remember the Event object
         to raise whenever a message arrives.
@@ -55,14 +65,28 @@ class _TopicWaiter(threading.Thread):
         # of that topic arrives:
         self.eventsToSet = {}
         
-        # Function (rather than method) to use as callback when
-        # subscribing to the underlying Redis system:
-        self.allTopicsDeliveryFunc = functools.partial(self.busMsgArrived, self)
-        
-        
         # Use the recommended way of stopping a thread:
         # Set a variable that the thread checks periodically:
         self.done = False
+        
+        self.rserver = redis.StrictRedis(host=host, port=port, db=db)
+        
+        # Create a pubsub instance for all pub/sub needs.
+        # The ignore_subscribe_messages=True prevents our message
+        # handlers to constantly get called with confirmations of our
+        # own publish/subscribe and other commands to the Redis server:
+        self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
+        
+        # Function (rather than method) to use as callback when
+        # subscribing to the underlying Redis system:
+        self.allTopicsDeliveryFunc = functools.partial(self.busMsgArrived)
+        
+        # When no topics are subscribed to, the pubsub instance's listen()
+        # iterator runs dry, dropping us out of the loop in the run() method.
+        # So: a kludge: subscribe to a topic that will never be used:
+        self.addTopic(str(uuid.uuid4()), self.allTopicsDeliveryFunc)
+
+        #**********self.allTopicsDeliveryFunc = tmpCallback
         
     def addTopic(self, topicName, callbackFunc):
         '''
@@ -81,12 +105,25 @@ class _TopicWaiter(threading.Thread):
         else:
             self.deliveryCallbacks[topicName] = [callbackFunc]
         
-    def removeTopic(self, topicName):
+        self.pubsub.subscribe(**{topicName : self.allTopicsDeliveryFunc})
+        
+    def removeTopic(self, topicName=None):
+        '''
+        Stop listening to a topic. If topicName is None,
+        stop listening to all topics.
+        
+        :param topicName: name of topic to stop listening to, or None for stop listening to all.
+        :type topicName: {String | None}
+        '''
         
         try:
             del self.deliveryCallbacks[topicName]
         except KeyError:
             pass
+        if topicName is not None:
+            self.pubsub.unsubscribe(topicName)
+        else:
+            self.pubsub.unsubscribe()
         
     def addListener(self, topicName, callbackFunc):
         '''
@@ -139,6 +176,21 @@ class _TopicWaiter(threading.Thread):
 
         return self.deliveryCallbacks.keys()
 
+    def subscribedTo(self, topicName):
+        '''
+        Return True if currently subscribed to this topic.
+        
+        :param topicName: topic from which the given callback is to be removed.
+        :type topicName: String
+        '''
+        
+        try:
+            self.deliveryCallbacks[topicName]
+            return True
+        except KeyError:
+            return False
+
+
     def listeners(self, topicName):
         '''
         Return all the callback functions that will be called
@@ -185,7 +237,6 @@ class _TopicWaiter(threading.Thread):
         :param busMsg:
         :type busMsg:
         '''
-        
         # Push the msg into a thread-safe queue;
         # that will wake the loop in run():
         self.msgQueue.put(busMsg)
@@ -200,42 +251,48 @@ class _TopicWaiter(threading.Thread):
         thread should stop.
         '''
         
-        self.busModule.setTopicWaiterLive(True)
         try:
             while not self.done:
                 
+                #**************8
+                print('Channels when entering topicWaiter loop: %s' % self.topics())
+                #**************8
+                
                 # Hang for a msg to arrive:
-                try:
-                    busMsg = self.msgQueue.get(_TopicWaiter.DO_BLOCK, _TopicWaiter.TOPIC_WAITER_STOPPED_CHECK_INTERVAL)
-                except Queue.Empty:
+                for _ in self.pubsub.listen():
+                    try:
+                        busMsg = self.msgQueue.get(_TopicWaiter.DO_BLOCK, _TopicWaiter.TOPIC_WAITER_STOPPED_CHECK_INTERVAL)
+                    except Queue.Empty:
                     # Timeout; check whether someone called
                     # the stop() method while we were hanging: 
-                    if self.done:
-                        break
-                    else:
-                        continue
+                        if self.done:
+                            break
+                        else:
+                            continue
 
-                topic   = busMsg['channel']
-                content = busMsg['data']
-                try:
-                    deliveryCallbacks = self.deliveryCallbacks[topic]
-                except KeyError:
-                    # Received message to which we were not subscribed;
-                    # should not happen:
-                    raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(busMsg)))
-                
-                for deliveryFunc in deliveryCallbacks:
-                    deliveryFunc(topic, content)
-                    # Was the stop() method called?
-                    if self.done:
-                        break
-                try:
-                    event = self.eventsToSet[topic]
-                    event.set()
-                except KeyError:
-                    pass
+                    topic   = busMsg['channel']
+                    content = busMsg['data']
+                    try:
+                        deliveryCallbacks = self.deliveryCallbacks[topic]
+                    except KeyError:
+                        # Received message to which we were not subscribed;
+                        # should not happen:
+                        raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(busMsg)))
+                    
+                    for deliveryFunc in deliveryCallbacks:
+                        deliveryFunc(BusMessage(content,topic))
+                        # Was the stop() method called?
+                        if self.done:
+                            break
+                    try:
+                        event = self.eventsToSet[topic]
+                        event.set()
+                    except KeyError:
+                        pass
         finally:
-            self.busModule.setTopicWaiterLive(False)
+            # Unsubscribe from all topics, including the kludge one:  
+            self.busModule.unsubscribeFromTopic()
         
     def stop(self):
         self.done = True
+        self.pubsub.close()

@@ -11,9 +11,6 @@ import threading
 import types
 import uuid
 
-import redis
-from redis.client import StrictRedis
-
 from bus_message import BusMessage
 from redis_bus_python.topic_waiter import _TopicWaiter
 from schoolbus_exceptions import SyncCallTimedOut, SyncCallRuntimeError
@@ -23,27 +20,21 @@ class BusAdapter(object):
     '''
     classdocs
     '''
+    _LEGAL_MSG_TYPES = ['req', 'resp']
+    _LEGAL_STATUS    = ['OK', 'ERROR']
 
     def __init__(self, host='localhost', port=6379, db=0):
         '''
         Constructor
         '''
         
-        # Thread-safe indicator whether the TopicWaiter is
-        # running; needed because the TopicWaiter dies when
-        # we unsubscribe from the last topic. This variable
-        # must only be changed under protection of a threading.Condition.
-        # Therefore, use only self.setTopicWaiterLive() to change the variable:
-        self.topicWaiterIsRunning = False
-        self.topicWaiterIsRunningCondition = threading.Condition()
-        self.topicWaiterThread = None
-        
-        self.rserver = redis.StrictRedis(host=host, port=port, db=db)
-        # Create a pubsub instance for all pub/sub needs.
-        # The ignore_subscribe_messages=True prevents our message
-        # handlers to constantly get called with confirmations of our
-        # own publish/subscribe and other commands to the Redis server:
-        self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
+        # Place to save threading.Event objects
+        # that will allow the _TopicWaiter thread
+        # to raise a topic-specific event for which 
+        # clients of this class can wait:
+        self.topicEvents = {}
+        self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db)
+        self.topicWaiterThread.start()
         
     def publish(self, busMessage, topicName=None, sync=False, msgId=None, msgType='req', timeout=None, auth=None):
         
@@ -120,7 +111,7 @@ class BusAdapter(object):
                 self.addTopicListener(topicName, self.syncResultWaiter)
             
             # Finally: post the request...
-            self.producer.send_messages(topicName, json.dumps(msgDict))
+            self.topicWaiterThread.pubsub.publish(topicName, json.dumps(msgDict))
             
             # ... and wait for the answer message to invoke
             # self._awaitSynchronousReturn():
@@ -161,7 +152,7 @@ class BusAdapter(object):
         
         else:
             # Not a synchronous call; just publish the request:
-            self.pubsub().publish(topicName, json.dumps(msgDict))
+            self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
         
     def subscribeToTopic(self, topicName, deliveryCallback=None):
         '''
@@ -189,56 +180,74 @@ class BusAdapter(object):
         if type(deliveryCallback) != types.FunctionType and type(deliveryCallback) != functools.partial:
             raise ValueError("Parameter deliveryCallback must be a function, was of type %s" % type(deliveryCallback))
 
-        try:
-            # Is the topic listener thread running?
-            self.ensureTopicWaiterRunning(del****)
-            # Yep (b/c we didn't bomb out). Nothing to do:
-            return
+        # Create an event object that the thread will set()
+        # whenever a msg arrives, even if no listeners exist:
+        event = threading.Event()
+        self.topicEvents[topicName] = event
         
-        except KeyError:
-            # No thread exists for this topic. 
-            
-            # Create an event object that the thread will set()
-            # whenever a msg arrives, even if no listeners exist:
-            event = threading.Event()
-            self.topicEvents[topicName] = event
-            
-            # Create the thread that will listen to Kafka;
-            # raises KafkaServerNotFound if necessary:
-            waitThread = _TopicWaiter(topicName, 
-                                     self, 
-                                     self.kafkaGroupId, 
-                                     deliveryCallback=deliveryCallback, 
-                                     eventObj=event,
-                                     kafkaLiveCheckTimeout=kafkaLiveCheckTimeout)
+        self.topicWaiterThread.addTopic(topicName, deliveryCallback)
 
-            
-            waitThread.start()
 
-    def unsubscribeFromTopic(self, topicName):
+    def unsubscribeFromTopic(self, topicName=None):
         '''
         Unsubscribes from topic. Stops the topic's thread,
         and removes it from bookkeeping so that the Thread object
         will be garbage collected. Same for the Event object
         used by the thread to signal message arrival.
         
+        Passing None for topicName unsubscribes from all topics.
+        
         Calling this method for a topic that is already
         unsubscribed is a no-op.
         
         :param topicName: name of topic to subscribe from
-        :type topicName: string
+        :type topicName: {string | None}
         '''
 
         # Delete our record of the Event object used by the thread to
         # indicate message arrivals:
+        if topicName is None:
+            self.topicEvents = {}
+        else:
+            try:
+                del self.topicEvents[topicName]
+            except KeyError:
+                pass
+
+        self.topicWaiterThread.removeTopic(topicName)
+
+    def waitForMsg(self, topicName, timeout=None):
+        '''
+        Hang efficiently for arrival of a message of
+        a particular topic. Return is not the message,
+        if one was received, but just True/False. Any
+        message arrival will already have called the associated
+        callback(s). 
+        
+        :param topicName: topic to wait on
+        :type topicName: String
+        :param timeout: max time to wait; if None, wait forever
+        :type timeout: float
+        :return: True if a message was received within the timeout, else False
+        :rtype: bool
+        '''
+        
         try:
-            del self.topicEvents[topicName]
+            event = self.topicEvents[topicName]
         except KeyError:
-            pass
+            # No event was created for this topic. The
+            # semi-legitimate case of such a mishap is that
+            # the caller never subscribed to the associated
+            # topic. The bad case is that subscription occurred,
+            # but we didn't create/save an associated event
+            # object:
+            if self.topicWaiterThread.subscribedTo(topicName):
+                raise RuntimeError("We are subscribed to topic '%s,' but no event exists (should not happen, call someone)." % topicName)
+            else:
+                raise NameError("Not subscribed to topic '%s,' so cannot listen to messages on that topic." % topicName)
 
-        if self.getTopicWaiterLive():
-            self.topicWaiterThread.removeTopic(topicName)
-
+        return event.wait(timeout)
+        
     
     def mySubscriptions(self):
         '''
@@ -252,41 +261,10 @@ class BusAdapter(object):
             return self.topicWaiterThread.topics()
         else:
             return []
-
-
-    def createWireMessage(self, msgDict):
-        pass
-
-    def ensureTopicWaiterRunning(self):
-        if not self.getTopicWaiterLive():
-            self.topicWaiterThread = _TopicWaiter(self)
-    
-    def setTopicWaiterLive(self, topicWaiterIsLive):
-        '''
-        Used to set and reset our variable that tracks whether
-        an instance of the TopicWaiter is running or not. Needed
-        because the TopicWaiter terminates when no topics are subscribed
-        to. The TopicWaiter thread calls this method with True as
-        it starts running, and sets it to False when it is about
-        to terminate.
         
-        :param topicWaiterIsLive:
-        :type topicWaiterIsLive:
-        '''
-        self.topicWaiterIsRunningCondition.acquire()
-        self.topicWaiterIsRunning = topicWaiterIsLive
-        self.topicWaiterIsRunningCondition.release()
-        
-    def getTopicWaiterLive(self):
-        '''
-        Returns True or False depending on whether the
-        TopicWaiter thread is currently running.
-        '''
-        self.topicWaiterIsRunningCondition.acquire()
-        threadStatus = self.topicWaiterIsRunning
-        self.topicWaiterIsRunningCondition.release()
-        return threadStatus
-    
+    def close(self):
+        self.topicWaiterThread.stop()
+
     def playWithRedis(self):
         
 #         self.rserver.set('foo', 'bar')
@@ -298,14 +276,17 @@ class BusAdapter(object):
 #         print('Bluebell in myDict is %s' % res)
         
         # print('RESPONSE_CALLBACKS: %s' % str(StrictRedis.RESPONSE_CALLBACKS))
-#        self.rserver.publish('myTopic', 'foobar')
+#         self.rserver.publish('myTopic', 'foobar')
 
-        threading.Timer(4, ding).start()
-        self.pubsub.listen()
-        print("Got out of listen()")
-    
-def ding():
-    print("Got ding")
+#         threading.Timer(4, ding).start()
+#         self.pubsub.listen()
+#         print("Got out of listen()")
+
+#        self.publish('Hello world', 'myTopic', False)
+#        self.close()
+
+        pass
+
 
 if __name__ == '__main__':
     
