@@ -5,6 +5,7 @@ Created on May 19, 2015
 '''
 import Queue
 import functools
+import json
 import threading
 import uuid
 
@@ -84,7 +85,8 @@ class _TopicWaiter(threading.Thread):
         # When no topics are subscribed to, the pubsub instance's listen()
         # iterator runs dry, dropping us out of the loop in the run() method.
         # So: a kludge: subscribe to a topic that will never be used:
-        self.addTopic(str(uuid.uuid4()), self.allTopicsDeliveryFunc)
+        self.secretTopic = str(uuid.uuid4())
+        self.addTopic(self.secretTopic, self.allTopicsDeliveryFunc)
         
     def addTopic(self, topicName, deliveryQueue):
         '''
@@ -164,13 +166,17 @@ class _TopicWaiter(threading.Thread):
 
     def topics(self):
         '''
-        Return all topics we are subscribed to
+        Return all topics we are subscribed to.
         
         :return: list of topics to which subscriptions have been established.
         :rtype: (String)
         '''
-
-        return self.deliveryQueues.keys()
+        
+        # We don't want to return the topic we subscribed to
+        # just to keep listen() from returning right away:
+        trueTopics = self.deliveryQueues.keys()
+        trueTopics.remove(self.secretTopic)
+        return trueTopics
 
     def subscribedTo(self, topicName):
         '''
@@ -225,27 +231,39 @@ class _TopicWaiter(threading.Thread):
         '''
         del self.eventsToSet[topic]
 
-    def busMsgArrived(self, busMsg):
+    def busMsgArrived(self, rawRedisBusMsg):
         '''
         Callback used for all topics that are subscribed to.
         This is what the Redis client will call for all topics.
         
-        :param busMsg:
-        :type busMsg:
+        :param rawRedisBusMsg: raw message from the Redis system
+        :type rawRedisBusMsg: dict
         '''
         # Push the msg into a thread-safe queue;
         # for the message's topic:
-        topic   = busMsg['channel']
-        content = busMsg['data']
+        topic   = rawRedisBusMsg['channel']
+        content = rawRedisBusMsg['data']
         try:
+            # Get list of queues for this topic:
             deliveryQueues = self.deliveryQueues[topic]
         except KeyError:
             # Received message to which we were not subscribed;
             # should not happen:
-            raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(busMsg)))
+            raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(rawRedisBusMsg)))
+        
+        # If this is a proper SchoolBus message, the content
+        # will look like the following JSON:
+        #    {"content": "10", "type": "req", "id": "71d3babb-131e-43ff-943f-e7056714558f", "time": "2015-07-08T09:00:03.112241"}
+        # Place these into a BusMessage, making each key an instance variable:
+        try:
+            busMsg = BusMessage(topicName=topic, moreArgsDict=json.loads(content))
+        except (ValueError, TypeError):
+            # Not valid JSON: just enter the content into the
+            # new BusMessage's content property directly:
+            busMsg = BusMessage(content=content, topicName=topic)
         
         for deliveryQueue in deliveryQueues:
-            deliveryQueue.put_nowait(BusMessage(content,topicName=topic))
+            deliveryQueue.put_nowait(busMsg)
             # Was the stop() method called?
             if self.done:
                 break

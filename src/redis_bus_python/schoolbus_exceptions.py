@@ -27,13 +27,13 @@ class KafkaBusException(Exception):
                              self.message,
                              ': ' + str(self.errorDetail) if self.errorDetail is not None and len(str(self.errorDetail)) > 0 else ''))
         
-class KafkaServerNotFound(KafkaBusException):
+class RedisServerNotFound(Exception):
     '''
     No Kafka server was found
     '''
     pass
 
-class InsufficientInformation(KafkaBusException):
+class InsufficientInformation(Exception):
     '''
     A bus message does not contain all the information
     required by the bus protocol, or a bus module.
@@ -43,7 +43,7 @@ class InsufficientInformation(KafkaBusException):
     pass
 
 
-class BadInformation(KafkaBusException):
+class BadInformation(Exception):
     '''
     A bus message does not contain syntactically
     or semantically incorrect information
@@ -51,14 +51,14 @@ class BadInformation(KafkaBusException):
     '''
     pass
     
-class SyncCallTimedOut(KafkaBusException):
+class SyncCallTimedOut(Exception):
     '''
     A synchronous call to a bus module did not
     return a result within a given timeout.
     '''
     pass
 
-class SyncCallRuntimeError(KafkaBusException):
+class SyncCallRuntimeError(Exception):
     '''
     Error while processing an incoming result to
     a synchronous call.

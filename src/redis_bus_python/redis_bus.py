@@ -2,6 +2,11 @@
 Created on Jul 6, 2015
 
 @author: paepcke
+
+TODO:
+   o documentation:
+        - sync responses now returned on a temporary topic 
+             whose name is the incoming msg's ID number
 '''
 
 import Queue
@@ -14,7 +19,7 @@ import uuid
 
 from bus_message import BusMessage
 from redis_bus_python.topic_waiter import _TopicWaiter
-from schoolbus_exceptions import SyncCallTimedOut, SyncCallRuntimeError
+from schoolbus_exceptions import SyncCallTimedOut
 
 
 class BusAdapter(object):
@@ -27,6 +32,8 @@ class BusAdapter(object):
     # to check whether someone called stop() on the thread.
 
     _DELIVERY_THREAD_PAUSE_INTERVAL = 2 # seconds
+    
+    _DO_BLOCK = True
 
     _LEGAL_MSG_TYPES = ['req', 'resp']
     _LEGAL_STATUS    = ['OK', 'ERROR']
@@ -35,12 +42,44 @@ class BusAdapter(object):
         '''
         Constructor
         '''
-        
+
+        self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
         self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db)
         self.topicWaiterThread.start()
         
     def publish(self, busMessage, topicName=None, sync=False, msgId=None, msgType='req', timeout=None, auth=None):
+        '''
+        Main method for publishing a message. For publishing a response
+        to a synchronous call, see publishResponse().
+        
+        :param busMessage: either a string, or a BusMessage object. If a string,
+            that string will be the outgoing message's content field value. If
+            a BusMessage object, that object's content property will be the outgoing
+            message's content field value.
+        :type busMessage: {String | BusMessage}
+        :param topicName: name of topic to publish to. If busMessage is a BusMessage
+            object, then a non-None passed-in topicName takes precedence over the 
+            busMessage's topicName. Either the passed-in topicName, or its value
+            in the busMessage must be non-None.
+        :type topicName: {String | None}
+        :param sync: if true, the outgoing message is published. This method will
+            then not return until either a return message is received with the 
+            outgoing message's id, but type 'resp', or a timeout occurs.
+        :type sync: bool
+        :param msgId: id field value of the outgoing message. If this passed-in value
+            is None, and a possibly passed-in BusMessage is None as well, then a new
+            UUID is created and used.
+        :type msgId: {String | None}
+        :param msgType: one of the BusAdapter._LEGAL_MSG_TYPES indicating the message
+            type.
+        :type msgType: String
+        :param timeout: used only if sync == True. Amount of time to wait for
+            callee to return a value. If None, wait forever. Value is in (fractional) seconds.
+        :type timeout: {float | None}
+        :param auth: any authentication to be included in the bus message.
+        :type auth: String
+        '''
         
         if not isinstance(busMessage, BusMessage):
             # We were passed a raw string to send. The topic name
@@ -48,31 +87,40 @@ class BusAdapter(object):
             if topicName is None:
                 raise ValueError('Attempt to publish a string without specifying a topic name.')
             msg = busMessage
+            msgUuid = self._createUuid()
         else:
-            # the busMessage parm is a BusMessage instance:
-            # If topicName was given, it overrides any topic name
-            # associated with the BusObject; else:
+            # the busMessage parm is a BusMessage instance, which
+            # may contain several of the values for this method's
+            # parameters. The parameters take precedence:
+            
+            topicName = topicName if topicName is not None else busMessage.topicName
             if topicName is None:
-                # Grab topic name from the BusMessage:
-                topicName = busMessage.topicName()
-                # If the BusMessage did not include a topic name: error
-                if topicName is None:
-                    raise ValueError('Attempt to publish a BusMessage instance that does not hold a topic name: %s' % str(busMessage))
+                raise ValueError('Attempt to publish a BusMessage instance that does not hold a topic name: %s' % str(busMessage))
+            try:
+                msgUuid   = msgId if msgId is not None else busMessage.id
+            except AttributeError:
+                msgUuid = self._createUuid()
+                
+            try:
+                msgType   = msgType if msgType is not None else busMessage.type
+            except AttributeError:
+                msgType = 'req'
+            
             # Get the serialized, UTF-8 encoded message from the BusMessage:
-            msg = busMessage.theContent()
+            msg = busMessage.content
             
         # Now msg contains the msg text.
 
-        # Create a JSON struct:
-        if msgId is None:
-            msgUuid = str(uuid.uuid4())
-        else:
-            msgUuid = msgId
         # Sanity check on message type:
         if msgType not in BusAdapter._LEGAL_MSG_TYPES:
             raise ValueError('Legal message types are %s' % str(BusAdapter._LEGAL_MSG_TYPES))
         
-        msgDict = dict(zip(['id', 'type', 'time', 'theContent'],
+        # Sanity check on timeout:
+        if timeout is not None and type(timeout) != int and type(timeout) != float:
+            raise ValueError('Timeout must be None, an int, of a float; was %s' % str(timeout))
+        
+        # Create a JSON struct:
+        msgDict = dict(zip(['id', 'type', 'time', 'content'],
                            [msgUuid, msgType, datetime.now().isoformat(), msg]))
 
         # If synchronous operation requested, wait for response:
@@ -81,84 +129,64 @@ class BusAdapter(object):
             # Before publishing the request, must prepare for 
             # a function that will be invoked with the result.
             
-            # Use instance vars for communication with the result 
-            # delivery thread.
-            # Use of these instance vars means that publish
-            # isn't re-entrant. Fine for now:
-
-            # For the result delivery method to know which msg id
-            # we are waiting for:            
-            self.uuidToWaitFor   = msgUuid
-            
-            # For the result delivery method to know which topic
-            # we are waiting for:
-            self.topicToWaitFor  = topicName
-
-            # For the result delivery method to put a string
-            # if an error occurs while processing the result
-            # bus message:
-
-            self.syncResultError = None
-            
-            # Create event that will wake us when result
-            # arrived and has been placed in self.resDict:
-
-            #*****
-
-            self.resultArrivedEvent = threading.Event(timeout)
-
-            # If not subscribed to the topic to which this synchronous
-            # call is being published, then subscribe to it temporarily:
-
-            wasSubscribed = topicName in self.mySubscriptions()
-            if not wasSubscribed:
-                self.subscribeToTopic(topicName, self.syncResultWaiter)
-            else:
-                self.addTopicListener(topicName, self.syncResultWaiter)
-            
-            # Finally: post the request...
-            self.topicWaiterThread.pubsub.publish(topicName, json.dumps(msgDict))
-            
-            # ... and wait for the answer message to invoke
-            # self._awaitSynchronousReturn():
-            resBeforeTimeout = self.resultArrivedEvent.wait(timeout)
-            
-            # Result arrived, and was placed into
-            # self.resDict under the msgUuid. Remove the listener
-            # that waited for the result:
-            
-            self.removeTopicListener(topicName, self.syncResultWaiter)
-            
-            # If we weren't subscribed to this topic, then
-            # restore that condition:
-
-            if not wasSubscribed:
-                self.unsubscribeFromTopic(topicName)
-            
-            # If the 'call' timed out, raise exception:
-            if not resBeforeTimeout:
-                raise SyncCallTimedOut('Synchronous call on topic %s timed out' % topicName)
-            
-            # A result arrived from the call:
-            res = self.resDict.get(msgUuid, None)
-            
-            # No longer need the result to be saved:
             try:
-                del self.resDict[msgUuid]
-            except KeyError:
-                pass
+                # Queue through which the thread that waits for
+                # the result will deliver the result once it arrives:
+                resultDeliveryQueue = Queue.Queue()
+                
+                # Create a temporary topic for use just
+                # for the return result; we simply use the
+                # UUID of the outgoing-message-to-be:
+                self.subscribeToTopic(msgUuid, self.resultDeliveryFunc, resultDeliveryQueue)
             
-            # Check whether awaitSynchronousReturn() placed an
-            # error message into self.syncResultError:
-
-            if self.syncResultError is not None:
-                raise(SyncCallRuntimeError(self.syncResultError)) 
+                # Finally: post the request...; provide the result queue
+                # to the waiting handler as context for it to know where
+                # to put the result value:
+                self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
+                
+                # And wait for the result:
+                try:
+                    res = resultDeliveryQueue.get(BusAdapter._DO_BLOCK, timeout)
+                except Queue.Empty:
+                    raise SyncCallTimedOut("Synchronous publish to %s timed out before result was returned." % topicName)
+                    
+                return res
             
-            return res
-        
+            finally:
+                # Make sure the temporary topic used for returning the
+                # result is always left without a subscription so that
+                # Redis will destroy it:
+                self.unsubscribeFromTopic(msgUuid)
+            
         else:
             # Not a synchronous call; just publish the request:
             self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
+        
+    def publishResponse(self, incomingBusMessage, responseContent, timeout=None, auth=None):
+        '''
+        Convenience method for responding to a synchronous message.
+        The handler that received the incoming message can call this
+        method with the original incoming message, and a response
+        content. This method will publish a message that will properly
+        be recognized by the original requestor as a result to a
+        sync call. 
+        
+        :param incomingBusMessage: the BusMessage object that deliverd the request to the handler
+            from which a response is returned via calling this method.
+        :type incomingBusMessage: BusMessage
+        :param responseContent: result of the handler's work; this value will be entered
+            into the content field of the return message.
+        :type responseContent: <any>
+        :param timeout: 
+        :type timeout:
+        :param auth:
+        :type auth:
+        '''
+
+        # Responses use as the topic the UUID of the request message:
+        respBusMsg = BusMessage(content=responseContent, topicName=incomingBusMessage.id, type='resp')
+        self.publish(respBusMsg, timeout=timeout, auth=auth)
+    
         
     def subscribeToTopic(self, topicName, deliveryCallback=None, context=None):
         '''
@@ -278,15 +306,38 @@ class BusAdapter(object):
         :rtype: [String]
         '''
         #return self.pubsub.channels.keys()
-        if self.getTopicWaiterLive():
-            return self.topicWaiterThread.topics()
-        else:
-            return []
+        return self.topicWaiterThread.topics()
         
     def close(self):
         self.topicWaiterThread.stop()
         for topicThread in self.topicThreads.values():
             topicThread.stop()
+
+# --------------------------  Private Methods ---------------------
+          
+    def _createUuid(self):
+        return str(uuid.uuid4())
+            
+    def _awaitSynchronousReturn(self, busMsg, context=None):
+        '''
+        A callback for the result of a particular synchronous
+        publish(). Only the response from that 'RPC' call will
+        land here.
+        
+        :param busMsg: BusMessage object that includes everything about the result.
+        :type busMsg: BusMessage
+        :param context: an inter-thread queue through which the result in the busMsg
+            is delivered to the publish() method that's hanging on that queue.
+        :type context: Queue.Queue 
+        '''
+
+        # Context must be a queue to which we can deliver
+        # the result when it comes in:
+        if not isinstance(context, Queue.Queue):
+            raise TypeError("Message handler for synchronous-call returns must be passed a Queue.Queue as context; was '%s'" % str(context))
+
+        # Put the result into the queue on which the publish() method is hanging:        
+        context.put_nowait(busMsg.content)
             
 
     def playWithRedis(self):
