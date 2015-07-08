@@ -6,11 +6,9 @@ Created on May 19, 2015
 
 class BusMessage(object):
     '''
-    While messages can be passed around within a module as a JSON string,
-    this class provides an alternative. Messages can be encapsulated
-    in an instance of this class while in use within a bus module.
-    The instance ensures that text is in UTF-8. More conveniences
-    could/should be added to this class. 
+    Messages can be encapsulated into an instance of this class while 
+    in use within a bus module. The instance ensures that text is in UTF-8. 
+    More conveniences could/should be added to this class. 
     '''
 
 
@@ -25,7 +23,7 @@ class BusMessage(object):
         :type topicName: String
         '''
         self.setContent(pythonStruct)
-        self.topicName = None
+        self.topicName = topicName
         
     def setContent(self, pythonStruct):
         '''

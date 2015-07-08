@@ -13,7 +13,7 @@ import redis
 from redis_bus_python.redis_bus import BusAdapter
 
 
-def myCallback(busMsg):
+def myCallback(busMsg, context=None):
     RedisBusTest.msgQueue.put_nowait(busMsg)
 
 
@@ -22,7 +22,7 @@ class RedisBusTest(unittest.TestCase):
     msgQueue = Queue.Queue()
     DO_BLOCK = True
     #ACTION_TIMEOUT = 1 #sec
-    ACTION_TIMEOUT = 10 #sec
+    ACTION_TIMEOUT = 9 #sec
     
     bus = None
 
@@ -44,18 +44,13 @@ class RedisBusTest(unittest.TestCase):
 
     def testRoundTripPubSub(self):
         self.bus.subscribeToTopic('myTopic', myCallback)
-        #************
-#         resIt = self.bus.topicWaiterThread.pubsub.listen()
-#         for res in resIt:
-#             print('res: %s' % str(res))
-        #return
-        #************
-#******        Publisher('Unittest roundtrip', 'myTopic').start()
+        Publisher('Unittest roundtrip', 'myTopic').start()
         try:
             roundTripMsg = RedisBusTest.msgQueue.get(RedisBusTest.DO_BLOCK, RedisBusTest.ACTION_TIMEOUT)
         except Queue.Empty:
             raise ValueError("Timeout in round trip test (%d seconds)." % RedisBusTest.ACTION_TIMEOUT)
-        print(roundTripMsg)
+        self.assertEqual(roundTripMsg.topicName(), 'myTopic')
+        self.assertEqual(roundTripMsg.content(), 'Unittest roundtrip')
 
 class Publisher(threading.Thread):
     

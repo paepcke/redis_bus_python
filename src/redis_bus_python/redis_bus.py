@@ -4,6 +4,7 @@ Created on Jul 6, 2015
 @author: paepcke
 '''
 
+import Queue
 from datetime import datetime
 import functools
 import json
@@ -20,19 +21,22 @@ class BusAdapter(object):
     '''
     classdocs
     '''
+    
+    # Time interval after which delivery threads will 
+    # temporarily stop looking at their delivery queue
+    # to check whether someone called stop() on the thread.
+
+    _DELIVERY_THREAD_PAUSE_INTERVAL = 2 # seconds
+
     _LEGAL_MSG_TYPES = ['req', 'resp']
     _LEGAL_STATUS    = ['OK', 'ERROR']
-
+    
     def __init__(self, host='localhost', port=6379, db=0):
         '''
         Constructor
         '''
         
-        # Place to save threading.Event objects
-        # that will allow the _TopicWaiter thread
-        # to raise a topic-specific event for which 
-        # clients of this class can wait:
-        self.topicEvents = {}
+        self.topicThreads = {}
         self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db)
         self.topicWaiterThread.start()
         
@@ -99,6 +103,8 @@ class BusAdapter(object):
             # Create event that will wake us when result
             # arrived and has been placed in self.resDict:
 
+            #*****
+
             self.resultArrivedEvent = threading.Event(timeout)
 
             # If not subscribed to the topic to which this synchronous
@@ -154,7 +160,7 @@ class BusAdapter(object):
             # Not a synchronous call; just publish the request:
             self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
         
-    def subscribeToTopic(self, topicName, deliveryCallback=None):
+    def subscribeToTopic(self, topicName, deliveryCallback=None, context=None):
         '''
         For convenience, a deliveryCallback function may be passed,
         saving a subsequent call to addTopicListener(). See addTopicListener()
@@ -164,6 +170,11 @@ class BusAdapter(object):
         in this class will be used. That method is intended to be a 
         placeholder with no side effects.
         
+        The context is any object or structure that is
+        meaningful to the deliveryFunc. This could be the instance
+        of an application on which the deliveryFunc can call
+        methods, or an Event object that the deliveryFunc will set()        
+        
         It is a no-op to call this method multiple times for the
         same topic.
                  
@@ -172,6 +183,8 @@ class BusAdapter(object):
         :param deliveryCallback: a function that takes two args: a topic
             name, and a topic content string.
         :type deliveryCallback: function
+        :param context: any stucture that is meaningful to the callback function
+        :type context: <any>
         '''
         
         if deliveryCallback is None:
@@ -180,20 +193,23 @@ class BusAdapter(object):
         if type(deliveryCallback) != types.FunctionType and type(deliveryCallback) != functools.partial:
             raise ValueError("Parameter deliveryCallback must be a function, was of type %s" % type(deliveryCallback))
 
-        # Create an event object that the thread will set()
-        # whenever a msg arrives, even if no listeners exist:
-        event = threading.Event()
-        self.topicEvents[topicName] = event
+        msgQueueForTopic = Queue.Queue()
         
-        self.topicWaiterThread.addTopic(topicName, deliveryCallback)
+        # Spin off a thread that will run the delivery function;
+        # that function is expected to take a delivery queue:
+        
+        deliveryThread = DeliveryThread(topicName, msgQueueForTopic, deliveryCallback, context)
+        self.topicThreads[topicName] = deliveryThread
+        
+        self.topicWaiterThread.addTopic(topicName, msgQueueForTopic)
+        deliveryThread.start()
 
 
     def unsubscribeFromTopic(self, topicName=None):
         '''
         Unsubscribes from topic. Stops the topic's thread,
         and removes it from bookkeeping so that the Thread object
-        will be garbage collected. Same for the Event object
-        used by the thread to signal message arrival.
+        will be garbage collected.
         
         Passing None for topicName unsubscribes from all topics.
         
@@ -204,49 +220,54 @@ class BusAdapter(object):
         :type topicName: {string | None}
         '''
 
+        # Tell the TopicWaiter to go deaf on the topic:
+        self.topicWaiterThread.removeTopic(topicName)
+
         # Delete our record of the Event object used by the thread to
         # indicate message arrivals:
         if topicName is None:
-            self.topicEvents = {}
+            # Kill all topic threads:
+            for deliveryThread in self.topicThreads.values():
+                deliveryThread.stop()
+            self.topicThreads = {}
         else:
             try:
-                del self.topicEvents[topicName]
+                self.topicThreads[topicName].stop()
+                del self.topicThreads[topicName]
             except KeyError:
                 pass
-
-        self.topicWaiterThread.removeTopic(topicName)
-
-    def waitForMsg(self, topicName, timeout=None):
-        '''
-        Hang efficiently for arrival of a message of
-        a particular topic. Return is not the message,
-        if one was received, but just True/False. Any
-        message arrival will already have called the associated
-        callback(s). 
         
-        :param topicName: topic to wait on
-        :type topicName: String
-        :param timeout: max time to wait; if None, wait forever
-        :type timeout: float
-        :return: True if a message was received within the timeout, else False
-        :rtype: bool
-        '''
-        
-        try:
-            event = self.topicEvents[topicName]
-        except KeyError:
-            # No event was created for this topic. The
-            # semi-legitimate case of such a mishap is that
-            # the caller never subscribed to the associated
-            # topic. The bad case is that subscription occurred,
-            # but we didn't create/save an associated event
-            # object:
-            if self.topicWaiterThread.subscribedTo(topicName):
-                raise RuntimeError("We are subscribed to topic '%s,' but no event exists (should not happen, call someone)." % topicName)
-            else:
-                raise NameError("Not subscribed to topic '%s,' so cannot listen to messages on that topic." % topicName)
-
-        return event.wait(timeout)
+#     def waitForMsg(self, topicName, timeout=None):
+#         '''
+#         Hang efficiently for arrival of a message of
+#         a particular topic. Return is not the message,
+#         if one was received, but just True/False. Any
+#         message arrival will already have called the associated
+#         callback(s). 
+#         
+#         :param topicName: topic to wait on
+#         :type topicName: String
+#         :param timeout: max time to wait; if None, wait forever
+#         :type timeout: float
+#         :return: True if a message was received within the timeout, else False
+#         :rtype: bool
+#         '''
+#         
+#         try:
+#             event = self.topicEvents[topicName]
+#         except KeyError:
+#             # No event was created for this topic. The
+#             # semi-legitimate case of such a mishap is that
+#             # the caller never subscribed to the associated
+#             # topic. The bad case is that subscription occurred,
+#             # but we didn't create/save an associated event
+#             # object:
+#             if self.topicWaiterThread.subscribedTo(topicName):
+#                 raise RuntimeError("We are subscribed to topic '%s,' but no event exists (should not happen, call someone)." % topicName)
+#             else:
+#                 raise NameError("Not subscribed to topic '%s,' so cannot listen to messages on that topic." % topicName)
+# 
+#         return event.wait(timeout)
         
     
     def mySubscriptions(self):
@@ -264,6 +285,9 @@ class BusAdapter(object):
         
     def close(self):
         self.topicWaiterThread.stop()
+        for topicThread in self.topicThreads.values():
+            topicThread.stop()
+            
 
     def playWithRedis(self):
         
@@ -286,6 +310,54 @@ class BusAdapter(object):
 #        self.close()
 
         pass
+
+class DeliveryThread(threading.Thread):
+    
+    DO_BLOCK = True
+    
+    def __init__(self, topicName, deliveryQueue, deliveryFunc, context):
+        '''
+        Start a thread to handle messages for one given topic.
+        The delivery queue is a Queue.Queue on which the
+        run() message will receive BusMessage instances from
+        TopicWaiter. When such an instance arrives, the
+        run() method calls deliveryFunc with the BusMessage and
+        context. The context is any object or structure that is
+        meaningful to the deliveryFunc. This could be the instance
+        of an application on which the deliveryFunc can call
+        methods, or an Event object that the deliveryFunc will set()
+    
+        :param topicName:
+        :type topicName:
+        :param deliveryQueue:
+        :type deliveryQueue:
+        :param deliveryFunc:
+        :type deliveryFunc:
+        :param context:
+        :type context:
+        '''
+        threading.Thread.__init__(self)
+        self.deliveryQueue = deliveryQueue
+        self.deliveryFunc  = deliveryFunc
+        self.context       = context
+        self.done = False
+        
+    def stop(self):
+        self.done = True
+        
+    def run(self):
+        
+        while not self.done:
+            try:
+                busMsg = self.deliveryQueue.get(DeliveryThread.DO_BLOCK, BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL)
+            except Queue.Empty:
+                # Planned pause in hanging on queue:
+                # if anyone called stop(), then we'll
+                # fall out of the loop:
+                continue
+            self.deliveryFunc(busMsg, self.context)
+            continue
+
 
 
 if __name__ == '__main__':

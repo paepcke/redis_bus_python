@@ -58,7 +58,7 @@ class _TopicWaiter(threading.Thread):
         #    'myTopic1' : [myCallback1]
         #    'myTopic2' : [myCallback1, myCallback2]
         
-        self.deliveryCallbacks = {}
+        self.deliveryQueues = {}
 
         # Optionally, each topic may have a threading.Event objects 
         # associated with it that will be raised when a message 
@@ -85,10 +85,8 @@ class _TopicWaiter(threading.Thread):
         # iterator runs dry, dropping us out of the loop in the run() method.
         # So: a kludge: subscribe to a topic that will never be used:
         self.addTopic(str(uuid.uuid4()), self.allTopicsDeliveryFunc)
-
-        #**********self.allTopicsDeliveryFunc = tmpCallback
         
-    def addTopic(self, topicName, callbackFunc):
+    def addTopic(self, topicName, deliveryQueue):
         '''
         Add a topic to listen to. If the topic already
         exists, then the callbackFunc will be appended to
@@ -96,14 +94,14 @@ class _TopicWaiter(threading.Thread):
         
         :param topicName: name of topic
         :type topicName: String
-        :param callbackFunc: function taking a topic and BusMessage as arguments
-        :type callbackFunc: <function(String, BusMessage>
+        :param deliveryQueue: queue where to add incoming msgs of this topic
+        :type deliveryQueue: Queue.Queue
         '''
         
-        if self.deliveryCallbacks.has_key(topicName):
-            self.addListener(topicName, callbackFunc)
+        if self.deliveryQueues.has_key(topicName):
+            self.addListener(topicName, deliveryQueue)
         else:
-            self.deliveryCallbacks[topicName] = [callbackFunc]
+            self.deliveryQueues[topicName] = [deliveryQueue]
         
         self.pubsub.subscribe(**{topicName : self.allTopicsDeliveryFunc})
         
@@ -117,7 +115,7 @@ class _TopicWaiter(threading.Thread):
         '''
         
         try:
-            del self.deliveryCallbacks[topicName]
+            del self.deliveryQueues[topicName]
         except KeyError:
             pass
         if topicName is not None:
@@ -125,29 +123,27 @@ class _TopicWaiter(threading.Thread):
         else:
             self.pubsub.unsubscribe()
         
-    def addListener(self, topicName, callbackFunc):
+    def addListener(self, topicName, deliveryQueue):
         '''
-        Add a listener who will be notified with any
-        message that arrives on the given topic. See :func:`addTopicListener` 
-        in :class:`BusAdapter` for details on parameters.
+        Add a queue for a listener that will be fed with any
+        message that arrives on the given topic.
         If the topic does not already exist, it will be
-        added, with the given callback as the (so far) only
+        added, with the given queue as the (so far) only
         listener.
         
         :param topicName: name of topic to which callback is to be added.
         :type topicName: String
-        :param callbackFunc: function with two args: a topic name, and
-            a string that is the message content.
-        :type callbackFunc: function 
+        :param deliveryQueue: queue to feed with messages to the given topic
+        :type deliveryQueue: Queue.Queue 
         '''
 
         try:
-            currCallbacks = self.deliveryCallbacks[topicName]
-            currCallbacks.append(callbackFunc)
+            currQueues = self.deliveryQueues[topicName]
+            currQueues.append(deliveryQueue)
         except KeyError:
-            self.addTopic(topicName, callbackFunc)
+            self.addTopic(topicName, deliveryQueue)
 
-    def removeListener(self, topicName, callbackFunc):
+    def removeListener(self, topicName, deliveryQueue):
         '''
         Remove the specified function from the callbacks to
         notify upon message arrivals. It is a no-op to
@@ -155,14 +151,14 @@ class _TopicWaiter(threading.Thread):
         
         :param topicName: topic from which the given callback is to be removed.
         :type topicName: String
-        :param callbackFunc: callback function to remove. 
-        :type callbackFunc: Function
+        :param deliveryQueue: listener delivery queue to be removed
+        :type deliveryQueue: Queue.Queue
         '''
 
         try:
-            self.deliveryCallbacks[topicName].remove(callbackFunc)
+            self.deliveryQueues[topicName].remove(deliveryQueue)
         except (KeyError, ValueError):
-            # This callback func wasn't registered
+            # This queue func wasn't registered
             # in the first place, or topic isnt' subscribed to:
             return
 
@@ -174,35 +170,35 @@ class _TopicWaiter(threading.Thread):
         :rtype: (String)
         '''
 
-        return self.deliveryCallbacks.keys()
+        return self.deliveryQueues.keys()
 
     def subscribedTo(self, topicName):
         '''
         Return True if currently subscribed to this topic.
         
-        :param topicName: topic from which the given callback is to be removed.
+        :param topicName: topic from that is to be checked
         :type topicName: String
         '''
         
         try:
-            self.deliveryCallbacks[topicName]
+            self.deliveryQueues[topicName]
             return True
         except KeyError:
             return False
 
 
-    def listeners(self, topicName):
+    def listenerQueues(self, topicName):
         '''
-        Return all the callback functions that will be called
+        Return all the listener queues that will be fed
         each time a message arrives on the given topic.
         
         :param topicName: topic from which the given callback is to be removed.
         :type topicName: String
-        :return: list of registered callback functions.
+        :return: list of registered delivery queues.
         '''
         
         try:
-            return self.deliveryCallbacks[topicName]
+            return self.deliveryQueues[topicName]
         except KeyError:
             return []
 
@@ -238,9 +234,28 @@ class _TopicWaiter(threading.Thread):
         :type busMsg:
         '''
         # Push the msg into a thread-safe queue;
-        # that will wake the loop in run():
-        self.msgQueue.put(busMsg)
-    
+        # for the message's topic:
+        topic   = busMsg['channel']
+        content = busMsg['data']
+        try:
+            deliveryQueues = self.deliveryQueues[topic]
+        except KeyError:
+            # Received message to which we were not subscribed;
+            # should not happen:
+            raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(busMsg)))
+        
+        for deliveryQueue in deliveryQueues:
+            deliveryQueue.put_nowait(BusMessage(content,topicName=topic))
+            # Was the stop() method called?
+            if self.done:
+                break
+
+        try:
+            event = self.eventsToSet[topic]
+            event.set()
+        except KeyError:
+            pass
+
     def run(self):
         '''
         Hang on Redis message arrival. Whenever a message arrives,
@@ -250,49 +265,24 @@ class _TopicWaiter(threading.Thread):
         Periodically check whether self.done is True, indicating that
         thread should stop.
         '''
-        
-        try:
-            while not self.done:
-                
-                #**************8
-                print('Channels when entering topicWaiter loop: %s' % self.topics())
-                #**************8
-                
-                # Hang for a msg to arrive:
+        while not self.done:
+            
+            # Hang for a msg to arrive:
+            try:
                 for _ in self.pubsub.listen():
-                    try:
-                        busMsg = self.msgQueue.get(_TopicWaiter.DO_BLOCK, _TopicWaiter.TOPIC_WAITER_STOPPED_CHECK_INTERVAL)
-                    except Queue.Empty:
-                    # Timeout; check whether someone called
-                    # the stop() method while we were hanging: 
-                        if self.done:
-                            break
-                        else:
-                            continue
-
-                    topic   = busMsg['channel']
-                    content = busMsg['data']
-                    try:
-                        deliveryCallbacks = self.deliveryCallbacks[topic]
-                    except KeyError:
-                        # Received message to which we were not subscribed;
-                        # should not happen:
-                        raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(busMsg)))
-                    
-                    for deliveryFunc in deliveryCallbacks:
-                        deliveryFunc(BusMessage(content,topic))
-                        # Was the stop() method called?
-                        if self.done:
-                            break
-                    try:
-                        event = self.eventsToSet[topic]
-                        event.set()
-                    except KeyError:
-                        pass
-        finally:
-            # Unsubscribe from all topics, including the kludge one:  
-            self.busModule.unsubscribeFromTopic()
+                    if self.done:
+                        break
+                    else:
+                        continue
+            except ValueError:
+                pass
         
     def stop(self):
         self.done = True
+        # Unsubscribe from all topics, including the kludge one.
+        # We call the BusAdapter's unsubscribe() method so
+        # that it too gets a chance to clean up. It will
+        # in turn call the removeTopic() method of this instance:
+        self.busModule.unsubscribeFromTopic()
+        
         self.pubsub.close()
