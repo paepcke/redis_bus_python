@@ -17,45 +17,45 @@ class BusMessage(object):
         Create a bus message.
         
         :param pythonStruct: Any Python structure that is to appear
-            on the wire in the content field of the bus message.
+            on the wire in the theContent field of the bus message.
         :type pythonStruct: <any>
         :param topicName: topic to which the message will ultimately be published.
         :type topicName: String
         '''
         self.setContent(pythonStruct)
-        self.topicName = topicName
+        self.theTopicName = topicName
         
     def setContent(self, pythonStruct):
         '''
-        Change message content.
+        Change message theContent.
         
-        :param pythonStruct: new message content
+        :param pythonStruct: new message theContent
         :type pythonStruct: <any>
         '''
         serialStruct = str(pythonStruct)
-        self.content = serialStruct.encode('UTF-8', 'ignore')
+        self.theContent = serialStruct.encode('UTF-8', 'ignore')
         # Remember the raw object:
-        self.rawContent = pythonStruct
+        self.theRawContent = pythonStruct
         
     def content(self):
         '''
-        Retrieve current message content.
+        Retrieve current message theContent.
         
-        :return: current UTF-8 encoded message content.
+        :return: current UTF-8 encoded message theContent.
         :rtype: String
         '''
-        return self.content
+        return self.theContent
     
     def rawContent(self):
         '''
         Return Python data structure that will in flattened form make up the
-        message content.
+        message theContent.
         
         :return: unflattened Python structure
         :rtype: <any>
         
         '''
-        return self.rawContent
+        return self.theRawContent
     
     def topicName(self):
         '''
@@ -64,4 +64,4 @@ class BusMessage(object):
         :return: topic name
         :rtype: String
         '''
-        return self.topicName
+        return self.theTopicName

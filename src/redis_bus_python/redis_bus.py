@@ -59,7 +59,7 @@ class BusAdapter(object):
                 if topicName is None:
                     raise ValueError('Attempt to publish a BusMessage instance that does not hold a topic name: %s' % str(busMessage))
             # Get the serialized, UTF-8 encoded message from the BusMessage:
-            msg = busMessage.content()
+            msg = busMessage.theContent()
             
         # Now msg contains the msg text.
 
@@ -72,7 +72,7 @@ class BusAdapter(object):
         if msgType not in BusAdapter._LEGAL_MSG_TYPES:
             raise ValueError('Legal message types are %s' % str(BusAdapter._LEGAL_MSG_TYPES))
         
-        msgDict = dict(zip(['id', 'type', 'time', 'content'],
+        msgDict = dict(zip(['id', 'type', 'time', 'theContent'],
                            [msgUuid, msgType, datetime.now().isoformat(), msg]))
 
         # If synchronous operation requested, wait for response:
@@ -181,7 +181,7 @@ class BusAdapter(object):
         :param topicName: official name of topic to listen for.
         :type topicName: string
         :param deliveryCallback: a function that takes two args: a topic
-            name, and a topic content string.
+            name, and a topic theContent string.
         :type deliveryCallback: function
         :param context: any stucture that is meaningful to the callback function
         :type context: <any>

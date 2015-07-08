@@ -43,7 +43,14 @@ class RedisBusTest(unittest.TestCase):
 
 
     def testRoundTripPubSub(self):
+        
         self.bus.subscribeToTopic('myTopic', myCallback)
+        
+        # Start a thread that publishes a msg to the topic
+        # we just subscribed to. The msg will be delivered to
+        # the myCallback() function, which will place it into
+        # a queue. The following try block picks it up from 
+        # there: 
         Publisher('Unittest roundtrip', 'myTopic').start()
         try:
             roundTripMsg = RedisBusTest.msgQueue.get(RedisBusTest.DO_BLOCK, RedisBusTest.ACTION_TIMEOUT)
