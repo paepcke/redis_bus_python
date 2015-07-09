@@ -7,6 +7,10 @@ TODO:
    o documentation:
         - sync responses now returned on a temporary topic 
              whose name is the incoming msg's ID number
+        - deliveryLock for delivery functions when subscribing.
+
+   o TopicWaiter: maybe take out the event facility (e.g. removeTopicEvent())
+   o Document deliveryLock
 '''
 
 import Queue
@@ -188,7 +192,7 @@ class BusAdapter(object):
         self.publish(respBusMsg, timeout=timeout, auth=auth)
     
         
-    def subscribeToTopic(self, topicName, deliveryCallback=None, context=None):
+    def subscribeToTopic(self, topicName, deliveryCallback=None, context=None, serializeDelivery=False):
         '''
         For convenience, a deliveryCallback function may be passed,
         saving a subsequent call to addTopicListener(). See addTopicListener()
@@ -213,6 +217,8 @@ class BusAdapter(object):
         :type deliveryCallback: function
         :param context: any stucture that is meaningful to the callback function
         :type context: <any>
+        :param serializeDelivery: if True, the deliveryCallback will ******
+        :type serializeDelivery: bool
         '''
         
         if deliveryCallback is None:
@@ -309,6 +315,8 @@ class BusAdapter(object):
         return self.topicWaiterThread.topics()
         
     def close(self):
+        for subscription in self.mySubscriptions():
+            self.unsubscribeFromTopic(subscription)
         self.topicWaiterThread.stop()
         for topicThread in self.topicThreads.values():
             topicThread.stop()
@@ -366,7 +374,7 @@ class DeliveryThread(threading.Thread):
     
     DO_BLOCK = True
     
-    def __init__(self, topicName, deliveryQueue, deliveryFunc, context):
+    def __init__(self, topicName, deliveryQueue, deliveryFunc, context, deliveryLock=None):
         '''
         Start a thread to handle messages for one given topic.
         The delivery queue is a Queue.Queue on which the
@@ -386,11 +394,15 @@ class DeliveryThread(threading.Thread):
         :type deliveryFunc:
         :param context:
         :type context:
+        :param lock: an optional lock that this thread will acquire
+            before calling deliveryFunc when a message arrives. 
+        :type lock: threadking.Lock
         '''
         threading.Thread.__init__(self)
         self.deliveryQueue = deliveryQueue
         self.deliveryFunc  = deliveryFunc
         self.context       = context
+        self.deliveryLock  = deliveryLock
         self.done = False
         
     def stop(self):
@@ -406,7 +418,13 @@ class DeliveryThread(threading.Thread):
                 # if anyone called stop(), then we'll
                 # fall out of the loop:
                 continue
-            self.deliveryFunc(busMsg, self.context)
+            if self.deliveryLock is not None:
+                with self.deliveryLock:
+                    self.deliveryFunc(busMsg, self.context)
+            else:
+                # Call delivery func without a lock,
+                # possibly re-entering the func:
+                self.deliveryFunc(busMsg, self.context)
             continue
 
 

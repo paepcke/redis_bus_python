@@ -247,9 +247,12 @@ class _TopicWaiter(threading.Thread):
             # Get list of queues for this topic:
             deliveryQueues = self.deliveryQueues[topic]
         except KeyError:
-            # Received message to which we were not subscribed;
-            # should not happen:
-            raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(rawRedisBusMsg)))
+            # Received message to which we were not subscribed.
+            # This can happen when a message was delivered, b/c
+            # we used to be subscribed, but we unsubscribed before
+            # we this method was called (race condition). Harmless:
+            return
+            #raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(rawRedisBusMsg)))
         
         # If this is a proper SchoolBus message, the content
         # will look like the following JSON:
@@ -294,6 +297,20 @@ class _TopicWaiter(threading.Thread):
                         continue
             except ValueError:
                 pass
+            except AttributeError:
+                # When a message arrives after
+                # we unsubscribed to a topic, b/c it
+                # was already delivered by the server,
+                # and was being processed in redis-py's
+                # client.py, then listen() will throw
+                # an AttributeError when trying to read
+                # on a connection that was closed as
+                # part of the unsubscribe. We just check
+                # whether stop() was called on this thread,
+                # and re-enter the loop:
+                if self.done:
+                    break
+                continue
         
     def stop(self):
         self.done = True

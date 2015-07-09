@@ -132,7 +132,8 @@ class ReceptionTester(threading.Thread):
         
         inMd5 = hashlib.md5(str(busMsg.content)).hexdigest()
         # Check that the context was delivered:
-        assert(inMd5 == context)
+        if inMd5 != context:
+            raise ValueError("md5 in msg should be %s, but was %s" % (inMd5, context))
                 
         if self.beSynchronous:
             # Publish a response:
