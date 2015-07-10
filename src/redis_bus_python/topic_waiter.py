@@ -250,13 +250,13 @@ class _TopicWaiter(threading.Thread):
             # Received message to which we were not subscribed.
             # This can happen when a message was delivered, b/c
             # we used to be subscribed, but we unsubscribed before
-            # we this method was called (race condition). Harmless:
+            # this method was called (race condition). Harmless:
             return
             #raise RuntimeError("Received message on topic '%s' to which no subscription exists: %s" % (topic, str(rawRedisBusMsg)))
         
         # If this is a proper SchoolBus message, the content
         # will look like the following JSON:
-        #    {"content": "10", "type": "req", "id": "71d3babb-131e-43ff-943f-e7056714558f", "time": "2015-07-08T09:00:03.112241"}
+        #    {"id": "71d3babb-131e-43ff-943f-e7056714558f", "content": "10",  "time": "1436571099"}
         # Place these into a BusMessage, making each key an instance variable:
         try:
             busMsg = BusMessage(topicName=topic, moreArgsDict=json.loads(content))
@@ -320,4 +320,16 @@ class _TopicWaiter(threading.Thread):
         # in turn call the removeTopic() method of this instance:
         self.busModule.unsubscribeFromTopic()
         
-        self.pubsub.close()
+        # Shut down the pubsub subsystem; this *should*
+        # release the run() loop from its listen() call,
+        # but it doesn't seem to...
+        #
+        # The underlying redis-py closes connections to the
+        # Redis server when doing the unsubscribes above, and then
+        # gets confused when pubsub.close() gets called: it
+        # calls close() on a variable that used to hold a socket,
+        # but is now None: 
+        try:
+            self.pubsub.close()
+        except AttributeError:
+            pass

@@ -7,10 +7,8 @@ TODO:
    o documentation:
         - sync responses now returned on a temporary topic 
              whose name is the incoming msg's ID number
-        - deliveryLock for delivery functions when subscribing.
 
    o TopicWaiter: maybe take out the event facility (e.g. removeTopicEvent())
-   o Document deliveryLock
 '''
 
 import Queue
@@ -50,6 +48,7 @@ class BusAdapter(object):
         self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
         self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db)
+        self.topicWaiterThread.setDaemon(True)
         self.topicWaiterThread.start()
         
     def publish(self, busMessage, topicName=None, sync=False, msgId=None, msgType='req', timeout=None, auth=None):
@@ -236,6 +235,7 @@ class BusAdapter(object):
         self.topicThreads[topicName] = deliveryThread
         
         self.topicWaiterThread.addTopic(topicName, msgQueueForTopic)
+        deliveryThread.setDaemon(True)
         deliveryThread.start()
 
 
@@ -257,16 +257,23 @@ class BusAdapter(object):
         # Tell the TopicWaiter to go deaf on the topic:
         self.topicWaiterThread.removeTopic(topicName)
 
-        # Delete our record of the Event object used by the thread to
-        # indicate message arrivals:
         if topicName is None:
             # Kill all topic threads:
             for deliveryThread in self.topicThreads.values():
                 deliveryThread.stop()
+                # Wait for thread to finish; timeout is a bit more
+                # than the 'stop-looking-at-queue' timeout used to check
+                # for periodic thread stoppage:
+                deliveryThread.join(BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL + 0.5)
             self.topicThreads = {}
         else:
             try:
                 self.topicThreads[topicName].stop()
+                # Wait for thread to finish; timeout is a bit more
+                # than the 'stop-looking-at-queue' timeout used to check
+                # for periodic thread stoppage:
+                self.topicThreads[topicName].join(BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL + 0.5)
+                
                 del self.topicThreads[topicName]
             except KeyError:
                 pass
@@ -317,9 +324,18 @@ class BusAdapter(object):
     def close(self):
         for subscription in self.mySubscriptions():
             self.unsubscribeFromTopic(subscription)
+            
         self.topicWaiterThread.stop()
+        # Wait up to 3sec for the TopicWaiter thread to wind down:
+        self.topicWaiterThread.join(3)
+        
+        # Stop all the delivery threads:
         for topicThread in self.topicThreads.values():
             topicThread.stop()
+            # Wait just a bit longer than the periodic
+            # 'check whether to stop' timeout of the
+            # delivery threads' queue hanging: 
+            topicThread.join(BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL + 0.5)
 
 # --------------------------  Private Methods ---------------------
           
@@ -374,7 +390,7 @@ class DeliveryThread(threading.Thread):
     
     DO_BLOCK = True
     
-    def __init__(self, topicName, deliveryQueue, deliveryFunc, context, deliveryLock=None):
+    def __init__(self, topicName, deliveryQueue, deliveryFunc, context):
         '''
         Start a thread to handle messages for one given topic.
         The delivery queue is a Queue.Queue on which the
@@ -394,15 +410,11 @@ class DeliveryThread(threading.Thread):
         :type deliveryFunc:
         :param context:
         :type context:
-        :param lock: an optional lock that this thread will acquire
-            before calling deliveryFunc when a message arrives. 
-        :type lock: threadking.Lock
         '''
         threading.Thread.__init__(self)
         self.deliveryQueue = deliveryQueue
         self.deliveryFunc  = deliveryFunc
         self.context       = context
-        self.deliveryLock  = deliveryLock
         self.done = False
         
     def stop(self):
@@ -418,15 +430,7 @@ class DeliveryThread(threading.Thread):
                 # if anyone called stop(), then we'll
                 # fall out of the loop:
                 continue
-            if self.deliveryLock is not None:
-                with self.deliveryLock:
-                    self.deliveryFunc(busMsg, self.context)
-            else:
-                # Call delivery func without a lock,
-                # possibly re-entering the func:
-                self.deliveryFunc(busMsg, self.context)
-            continue
-
+            self.deliveryFunc(busMsg, self.context)
 
 
 if __name__ == '__main__':

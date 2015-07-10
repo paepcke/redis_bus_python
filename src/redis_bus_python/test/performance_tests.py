@@ -10,8 +10,10 @@ import functools
 import hashlib
 import random
 import string
+import sys
 import threading
 import time
+import traceback
 
 from redis_bus_python.redis_bus import BusAdapter
 
@@ -42,7 +44,7 @@ class RedisPerformanceTester(object):
         :param msgLen:
         :type msgLen:
         '''
-        (msg, md5) = self.createMessage(msgLen)
+        (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
         startTime = time.time()
         for _ in range(numMsgs):
             self.bus.publish(msg, topicName='test')
@@ -53,7 +55,8 @@ class RedisPerformanceTester(object):
         '''
         Publish given number of messages to a topic that
         a thread in this same process is subscribed to.
-        These are asynchronous publish() calls.
+        These are asynchronous publish() calls. The receiving
+        thread computes MD5 of the received msg to verify.
         
         :param numMsgs:
         :type numMsgs:
@@ -64,6 +67,7 @@ class RedisPerformanceTester(object):
         (msg, md5) = self.createMessage(msgLen)
         try:
             listenerThread = ReceptionTester(msgMd5=md5, beSynchronous=False)
+            listenerThread.setDaemon(True)
             listenerThread.start()
             
             startTime = time.time()
@@ -71,8 +75,22 @@ class RedisPerformanceTester(object):
                 self.bus.publish(msg, topicName='test')
             endTime = time.time()
             self.printResult('Publishing %s msgs to a subscribed topic in same process: ' % str(numMsgs), startTime, endTime, numMsgs)
+        except Exception:
+            raise
         finally:
             listenerThread.stop()
+            listenerThread.join(3)
+            
+    def syncPublishing(self, numMsgs, msgLen):
+
+        (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
+
+        startTime = time.time()
+        for _ in range(numMsgs):
+            res = self.bus.publish(msg, topicName='test', sync=True) #@UnusedVariable
+        endTime = time.time()
+        self.printResult('Publishing %s msgs to a subscribed topic in same process: ' % str(numMsgs), startTime, endTime, numMsgs)
+        
     
     def createMessage(self, msgLen):
         '''
@@ -153,8 +171,25 @@ if __name__ == '__main__':
     tester = RedisPerformanceTester()
     # Send 10k msg of 100 bytes each to an unsubscribed topic:
     #****tester.publishToUnsubscribedTopic(10000, 100)
-    tester.publishToSubscribedTopic(100,100)
+    #****tester.publishToSubscribedTopic(10000,100)
+    tester.syncPublishing(10000,100)
     tester.close()
+    
+    #****************
+#     sys.stderr, "\n*** STACKTRACE - START ***\n"
+#     code = []
+#     for threadId, stack in sys._current_frames().items():
+#         code.append("\n# ThreadID: %s" % threadId)
+#         for filename, lineno, name, line in traceback.extract_stack(stack):
+#             code.append('File: "%s", line %d, in %s' % (filename,
+#                                                         lineno, name))
+#             if line:
+#                 code.append("  %s" % (line.strip()))
+#     
+#     for line in code:
+#         print >> sys.stderr, line
+#     print >> sys.stderr, "\n*** STACKTRACE - END ***\n"   
+    #****************
     
         
         
