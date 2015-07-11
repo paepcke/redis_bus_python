@@ -14,14 +14,16 @@ import redis
 from redis_bus_python.bus_message import BusMessage
 
 
-#*************
-def tmpCallback(msg):
-    print('Msg to pure func: %s' % str(msg))
-#*************
-
 class _TopicWaiter(threading.Thread):
     '''
-    classdocs
+    Class that listens to Redis messages arriving on all topics.
+    Clients of this class's singleton instance can register 
+    queues onto which the instance will place arriving messages.
+    The method _busMsgArrived() is called by the underlying
+    redis-py library with any incoming raw Redis message.
+    The method will place the message into a BusMessage instance,
+    and place that BusMessage onto all queues that are 
+    registered for the incoming message's topic. 
     '''
 
     DO_BLOCK = True
@@ -34,14 +36,8 @@ class _TopicWaiter(threading.Thread):
 
     def __init__(self, busAdapter, host='localhost', port=6379, db=0):
         '''
-        Initialize list of callback functions. Remember the Event object
-        to raise whenever a message arrives.
-        
-        Assumption: the passed-in parent BusAdapter object contains
-        instance variable bootstrapServers, which is initialized to
-        an array of strings of the form hostName:port, in which each
-        hostName is a Kafka server, and each port is a port on which
-        the Kafka server listens. Example: ['myKafkaServer.myplace.org:9092']. 
+        Initialize list queues on which callback functions are waiting
+        for incoming messages.
         
         :param topicName: Kafka topic to listen to
         :type topicName: string
@@ -61,11 +57,6 @@ class _TopicWaiter(threading.Thread):
         
         self.deliveryQueues = {}
 
-        # Optionally, each topic may have a threading.Event objects 
-        # associated with it that will be raised when a message 
-        # of that topic arrives:
-        self.eventsToSet = {}
-        
         # Use the recommended way of stopping a thread:
         # Set a variable that the thread checks periodically:
         self.done = False
@@ -80,7 +71,7 @@ class _TopicWaiter(threading.Thread):
         
         # Function (rather than method) to use as callback when
         # subscribing to the underlying Redis system:
-        self.allTopicsDeliveryFunc = functools.partial(self.busMsgArrived)
+        self.allTopicsDeliveryFunc = functools.partial(self._busMsgArrived)
         
         # When no topics are subscribed to, the pubsub instance's listen()
         # iterator runs dry, dropping us out of the loop in the run() method.
@@ -90,9 +81,12 @@ class _TopicWaiter(threading.Thread):
         
     def addTopic(self, topicName, deliveryQueue):
         '''
-        Add a topic to listen to. If the topic already
-        exists, then the callbackFunc will be appended to
-        the already existing callbacks.
+        Add a topic to listen to. This means: subscribe
+        to the topic in the underlying redis-py library, and
+        remember the given queue as associated with that topic.
+        If the topic is already subscribed to, then the given 
+        delivery queue will be appended to the already existing 
+        queue(s).
         
         :param topicName: name of topic
         :type topicName: String
@@ -100,58 +94,51 @@ class _TopicWaiter(threading.Thread):
         :type deliveryQueue: Queue.Queue
         '''
         
-        if self.deliveryQueues.has_key(topicName):
-            self.addListener(topicName, deliveryQueue)
-        else:
+        try:
+            # Are we already subscribed to this topic?
+            currQueues = self.deliveryQueues[topicName]
+            # If so, add the given queue to the existing ones
+            # to be fed whenever a msg arrives on this topic:
+            currQueues.append(deliveryQueue)
+        except KeyError:
+            # Topic has not been subscribed to before:
             self.deliveryQueues[topicName] = [deliveryQueue]
-        
-        self.pubsub.subscribe(**{topicName : self.allTopicsDeliveryFunc})
+            # Subscribe to the topic, specifying this class's
+            # reception function as handler:
+            self.pubsub.subscribe(**{topicName : self.allTopicsDeliveryFunc})
         
     def removeTopic(self, topicName=None):
         '''
         Stop listening to a topic. If topicName is None,
-        stop listening to all topics.
+        stop listening to all topics. See :meth:`topic_waiter._TopicWaiter.removeListener`
+        to remove just one queue from the topic.
         
-        :param topicName: name of topic to stop listening to, or None for stop listening to all.
+        :param topicName: name of topic to stop listening to, or None to 
+            stop listening to any topic.
         :type topicName: {String | None}
         '''
         
-        try:
-            del self.deliveryQueues[topicName]
-        except KeyError:
-            pass
+        # Unsubscribe in the underlying redis-py library: 
         if topicName is not None:
             self.pubsub.unsubscribe(topicName)
         else:
             self.pubsub.unsubscribe()
-        
-    def addListener(self, topicName, deliveryQueue):
-        '''
-        Add a queue for a listener that will be fed with any
-        message that arrives on the given topic.
-        If the topic does not already exist, it will be
-        added, with the given queue as the (so far) only
-        listener.
-        
-        :param topicName: name of topic to which callback is to be added.
-        :type topicName: String
-        :param deliveryQueue: queue to feed with messages to the given topic
-        :type deliveryQueue: Queue.Queue 
-        '''
-
+            
         try:
-            currQueues = self.deliveryQueues[topicName]
-            currQueues.append(deliveryQueue)
+            # Remove the delivery queue(s) associated
+            # with this topic:
+            del self.deliveryQueues[topicName]
         except KeyError:
-            self.addTopic(topicName, deliveryQueue)
+            pass
+        
 
     def removeListener(self, topicName, deliveryQueue):
         '''
-        Remove the specified function from the callbacks to
-        notify upon message arrivals. It is a no-op to
+        Remove the specified delivery queue from the queues
+        to feed arriving message on the given topic. It is a no-op to
         remove a non-existing listener.
         
-        :param topicName: topic from which the given callback is to be removed.
+        :param topicName: topic from which the given queue is to be removed.
         :type topicName: String
         :param deliveryQueue: listener delivery queue to be removed
         :type deliveryQueue: Queue.Queue
@@ -160,8 +147,8 @@ class _TopicWaiter(threading.Thread):
         try:
             self.deliveryQueues[topicName].remove(deliveryQueue)
         except (KeyError, ValueError):
-            # This queue func wasn't registered
-            # in the first place, or topic isnt' subscribed to:
+            # This queue wasn't registered in the first place, 
+            # or topic wasn't ever subscribed to:
             return
 
     def topics(self):
@@ -207,31 +194,10 @@ class _TopicWaiter(threading.Thread):
             return self.deliveryQueues[topicName]
         except KeyError:
             return []
-
-    def addTopicEvent(self, topic, eventObj):
-        '''
-        Add a threading.Event object for a particular topic.
-        The event will be raised whenever a message to that6
-        topic arrives.
         
-        :param topic: topic to notify on 
-        :type topic: String
-        :param eventObj: event object to set
-        :type eventObj: threading.Event
-        '''
-        self.eventsToSet[topic] = eventObj
-    
-    def removeTopicEvent(self, topic):
-        '''
-        Remove a threading.Event object for a particular
-        topic.
-        
-        :param topic: the topic for which an event should no longer exist
-        :type topic: String
-        '''
-        del self.eventsToSet[topic]
+    # ----------------------- Private Methods ---------------------- 
 
-    def busMsgArrived(self, rawRedisBusMsg):
+    def _busMsgArrived(self, rawRedisBusMsg):
         '''
         Callback used for all topics that are subscribed to.
         This is what the Redis client will call for all topics.
@@ -242,7 +208,8 @@ class _TopicWaiter(threading.Thread):
         # Push the msg into a thread-safe queue;
         # for the message's topic:
         topic   = rawRedisBusMsg['channel']
-        content = rawRedisBusMsg['data']
+        # Entire message text:
+        totalContent = rawRedisBusMsg['data']
         try:
             # Get list of queues for this topic:
             deliveryQueues = self.deliveryQueues[topic]
@@ -259,23 +226,30 @@ class _TopicWaiter(threading.Thread):
         #    {"id": "71d3babb-131e-43ff-943f-e7056714558f", "content": "10",  "time": "1436571099"}
         # Place these into a BusMessage, making each key an instance variable:
         try:
-            busMsg = BusMessage(topicName=topic, moreArgsDict=json.loads(content))
+            busMsg = BusMessage(topicName=topic, moreArgsDict=json.loads(totalContent))
         except (ValueError, TypeError):
             # Not valid JSON: just enter the content into the
             # new BusMessage's content property directly:
-            busMsg = BusMessage(content=content, topicName=topic)
-        
+            busMsg = BusMessage(content=totalContent, topicName=topic)
+        else:
+            # Bus message was at least a parsable JSON message. If
+            # it was also a proper SchoolBus message, then the busMsg 
+            # will have an 'id' field that's the message ID. By convention,
+            # this id is also used as the basis for the topic name on
+            # which any synchronous response to this message is to be
+            # returned:
+            try:
+                busMsg.responseTopic = self.busModule.getResponseTopic(busMsg)
+            except AttributeError:
+                busMsg.responseTopic = None
+
+        # Finally, place the message on all the queues
+        # on which handlers are waiting:        
         for deliveryQueue in deliveryQueues:
             deliveryQueue.put_nowait(busMsg)
             # Was the stop() method called?
             if self.done:
                 break
-
-        try:
-            event = self.eventsToSet[topic]
-            event.set()
-        except KeyError:
-            pass
 
     def run(self):
         '''

@@ -3,6 +3,10 @@ Created on May 19, 2015
 
 @author: paepcke
 '''
+import datetime
+import time
+import uuid
+
 
 class BusMessage(object):
     '''
@@ -30,8 +34,12 @@ class BusMessage(object):
             Instance variables will be created for them.
         :type moreArgsDict: {String : <any>}
         '''
-        self.content = content
+        self.content    = content
         self._topicName = topicName
+        self._id        = self._createUuid()
+        # Init the time field, though that might be
+        # modified by the BusAdapter.publish() method
+        self._time  	= int(time.time()*1000)
 
         if moreArgsDict is not None:
             if type(moreArgsDict) != dict:
@@ -42,8 +50,27 @@ class BusMessage(object):
         for instVarName,instVarValue in list(kwds.items()):
             setattr(self, instVarName, instVarValue)
                 
-            
-
+    @property
+    def id(self):
+        return self._id
+    
+    @property
+    def time(self):
+        return self._time
+    
+    @time.setter
+    def time(self, msecSinceEpoch):
+        self._time = msecSinceEpoch
+        
+    
+    @property
+    def isoTime(self, timeZone='GMT'):
+        '''
+        Returns the message's time in ISO8601 format.
+        Example: '2015-07-05T22:16:18+00:00' for GMT
+        '''
+        return datetime.datetime.fromtimestamp(self._time).isoformat()
+    
     @property
     def content(self):
         '''
@@ -99,6 +126,12 @@ class BusMessage(object):
         '''
         self._topicName = newTopicName
 
+# --------------------------  Private Methods ---------------------
+
+
+    def _createUuid(self):
+        return str(uuid.uuid4())
+            
     
 if __name__ == '__main__':
     myMsg = BusMessage('myString', topicName='myTopic', moreArgsDict={'foo' : 10, 'bar' : 'my string'}, kwd1=100, kwd2='foo')

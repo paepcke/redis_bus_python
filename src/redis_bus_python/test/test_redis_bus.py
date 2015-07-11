@@ -98,7 +98,8 @@ class RedisBusTest(unittest.TestCase):
             receiveCheckService.start()
             
             # Send msg to be received by that thread:
-            doubleResult = self.bus.publish(10, topicName='myTopic', sync=True)
+            msg = BusMessage(10, 'myTopic')
+            doubleResult = self.bus.publish(msg, sync=True)
             self.assertEqual(doubleResult, '20')
         finally:
             receiveCheckService.stop()
@@ -172,7 +173,7 @@ class ReceptionTester(threading.Thread):
             # Publish a response: doubling the int-ified content
             # of the incoming msg:
             response = int(busMsg.content) * 2
-            self.testBus.publishResponse(busMsg, response)
+            self.testBus.publish(self.testBus.makeResponseMsg(busMsg, response))
         else:
             assert(busMsg.content == self.correctValue)
 
