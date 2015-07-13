@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 
+from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
 
 
@@ -45,9 +46,10 @@ class RedisPerformanceTester(object):
         :type msgLen:
         '''
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
+        busMsg = BusMessage(content=msg, topicName='test')
         startTime = time.time()
         for _ in range(numMsgs):
-            self.bus.publish(msg, topicName='test')
+            self.bus.publish(busMsg)
         endTime = time.time()
         self.printResult('Publishing %s msgs to empty space: ' % str(numMsgs), startTime, endTime, numMsgs)
     
@@ -65,6 +67,7 @@ class RedisPerformanceTester(object):
         '''
 
         (msg, md5) = self.createMessage(msgLen)
+        busMsg = BusMessage(content=msg, topicName='test')
         try:
             listenerThread = ReceptionTester(msgMd5=md5, beSynchronous=False)
             listenerThread.setDaemon(True)
@@ -72,7 +75,7 @@ class RedisPerformanceTester(object):
             
             startTime = time.time()
             for _ in range(numMsgs):
-                self.bus.publish(msg, topicName='test')
+                self.bus.publish(busMsg)
             endTime = time.time()
             self.printResult('Publishing %s msgs to a subscribed topic in same process: ' % str(numMsgs), startTime, endTime, numMsgs)
         except Exception:
@@ -85,9 +88,10 @@ class RedisPerformanceTester(object):
 
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
 
+        busMsg = BusMessage(content=msg, topicName='test')
         startTime = time.time()
         for _ in range(numMsgs):
-            res = self.bus.publish(msg, topicName='test', sync=True) #@UnusedVariable
+            res = self.bus.publish(busMsg, sync=True) #@UnusedVariable
         endTime = time.time()
         self.printResult('Publishing %s msgs to a subscribed topic in same process: ' % str(numMsgs), startTime, endTime, numMsgs)
         
@@ -172,7 +176,7 @@ if __name__ == '__main__':
     # Send 10k msg of 100 bytes each to an unsubscribed topic:
     #****tester.publishToUnsubscribedTopic(10000, 100)
     #****tester.publishToSubscribedTopic(10000,100)
-    tester.syncPublishing(10000,100)
+    tester.syncPublishing(100,100)
     tester.close()
     
     #****************

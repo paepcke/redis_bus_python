@@ -45,7 +45,9 @@ class BusAdapter(object):
     # temporarily stop looking at their delivery queue
     # to check whether someone called stop() on the thread.
 
-    _DELIVERY_THREAD_PAUSE_INTERVAL = 2 # seconds
+    #*********_DELIVERY_THREAD_PAUSE_INTERVAL = 2 # seconds
+    #***** BAD: _DELIVERY_THREAD_PAUSE_INTERVAL = None # seconds
+    _DELIVERY_THREAD_PAUSE_INTERVAL = 0.001 # seconds
     
     _DO_BLOCK = True
 

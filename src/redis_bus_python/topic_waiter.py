@@ -227,7 +227,7 @@ class _TopicWaiter(threading.Thread):
         # Place these into a BusMessage, making each key an instance variable:
         try:
             busMsg = BusMessage(topicName=topic, moreArgsDict=json.loads(totalContent))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
             # Not valid JSON: just enter the content into the
             # new BusMessage's content property directly:
             busMsg = BusMessage(content=totalContent, topicName=topic)

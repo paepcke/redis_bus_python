@@ -6,8 +6,11 @@ Created on Jul 9, 2015
 @author: paepcke
 '''
 import functools
+import signal
+import sys
 import threading
 
+from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
 
 
@@ -40,12 +43,16 @@ class PerformanceTesterEchoServer(threading.Thread):
         :param busMsg: bus message object
         :type busMsg: BusMessage
         :param context: context Python structure, if subscribeToTopic() was
-            called with one.
+            called with one.uu
         :type context: <any>
         '''
+        #**********
+        print("Got msg.")
+        #**********
         if self.beSynchronous:
+            respMsg = BusMessage(content=busMsg.content, topicName=self.testBus.getResponseTopic(busMsg))
             # Publish a response:
-            self.testBus.publishResponse(busMsg, busMsg.content)
+            self.testBus.publish(respMsg)
             self.numEchoed += 1
 
     
@@ -57,7 +64,13 @@ class PerformanceTesterEchoServer(threading.Thread):
         self.testBus.unsubscribeFromTopic('test')
         self.testBus.close()
 
+def signal_handler(signal, frame):
+        print('Stopping SchoolBus echo service.')
+        sys.exit(0)
+
 if __name__ == '__main__':
+
+    signal.signal(signal.SIGINT, signal_handler)
     
     echoServer = PerformanceTesterEchoServer(beSynchronous=True)
     print("Starting to echo msgs on topic 'test'; cnt^C to stop...")

@@ -45,7 +45,9 @@ class BusMessage(object):
             if type(moreArgsDict) != dict:
                 raise ValueError("The moreArgsDict parameter of BusMessage must be a dict, None, or left out entirely; was '%s'" % str(moreArgsDict))
             for instVarName,instVarValue in list(moreArgsDict.items()):
-                setattr(self, instVarName, instVarValue)
+                # Ensure that the instance variable name is not unicode:
+                finalInstVarName = instVarName.encode('UTF-8', 'ignore')
+                setattr(self, finalInstVarName, instVarValue)
                 
         for instVarName,instVarValue in list(kwds.items()):
             setattr(self, instVarName, instVarValue)
@@ -53,6 +55,10 @@ class BusMessage(object):
     @property
     def id(self):
         return self._id
+    
+    @id.setter
+    def id(self, msgId):
+        self._id = msgId
     
     @property
     def time(self):

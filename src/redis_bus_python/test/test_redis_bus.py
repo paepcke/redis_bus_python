@@ -23,8 +23,10 @@ class RedisBusTest(unittest.TestCase):
 
     msgQueue = Queue.Queue()
     DO_BLOCK = True
-    #ACTION_TIMEOUT = 1 #sec
-    ACTION_TIMEOUT = 9 #sec
+    ACTION_TIMEOUT = 1 #sec
+    #ACTION_TIMEOUT = 2 #sec
+    #ACTION_TIMEOUT = 9 #sec
+    #ACTION_TIMEOUT = None # no timeout
     
     bus = None
 
@@ -99,7 +101,7 @@ class RedisBusTest(unittest.TestCase):
             
             # Send msg to be received by that thread:
             msg = BusMessage(10, 'myTopic')
-            doubleResult = self.bus.publish(msg, sync=True)
+            doubleResult = self.bus.publish(msg, sync=True, timeout=RedisBusTest.ACTION_TIMEOUT)
             self.assertEqual(doubleResult, '20')
         finally:
             receiveCheckService.stop()
