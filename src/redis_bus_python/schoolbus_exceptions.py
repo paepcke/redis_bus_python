@@ -4,32 +4,9 @@ Created on May 31, 2015
 @author: paepcke
 '''
 
-class KafkaBusException(Exception):
-    '''
-    classdocs
-    '''
-
-    def __init__(self, msg, errorDetail=None):
-        '''
-        Constructor
-        '''
-        super(KafkaBusException, self).__init__(msg)
-        self.errorDetail = errorDetail
-        
-    def __repr__(self):
-        '''
-        If the errorDetail instance variable of an
-        instance of this class contains information,
-        return a string <Subclassname>(<msg>: <errorDetail),
-        else just return the usual <Subclassname>(<msg>).
-        '''
-        return('%s(%s%s)' % (self.__class__.__name__,
-                             self.message,
-                             ': ' + str(self.errorDetail) if self.errorDetail is not None and len(str(self.errorDetail)) > 0 else ''))
-        
 class RedisServerNotFound(Exception):
     '''
-    No Kafka server was found
+    No Redis server was found
     '''
     pass
 

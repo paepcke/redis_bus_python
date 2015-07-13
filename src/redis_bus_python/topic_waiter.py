@@ -34,22 +34,25 @@ class _TopicWaiter(threading.Thread):
     
     TOPIC_WAITER_STOPPED_CHECK_INTERVAL = 5 # seconds
 
-    def __init__(self, busAdapter, host='localhost', port=6379, db=0):
+    def __init__(self, busAdapter, host='localhost', port=6379, db=0, threadName=None):
         '''
         Initialize list queues on which callback functions are waiting
         for incoming messages.
         
-        :param topicName: Kafka topic to listen to
+        :param topicName: bus topic to listen to
         :type topicName: string
         :param busAdapter: BusAdapter object that created this thread.
         :type busAdapter: BusAdapter
         '''
 
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name=threadName)
         self.busModule = busAdapter
-
-        self.msgQueue  = Queue.Queue()
         
+        # An event to signal when _busMsgArrived
+        # has stuffed an incoming msg into all
+        # relevant delivery queues.
+        self.msgDelivered = threading.Event()
+
         # We maintain a dict of topics, whose
         # values are arrays of callback functions:
         #    'myTopic1' : [myCallback1]
@@ -250,6 +253,8 @@ class _TopicWaiter(threading.Thread):
             # Was the stop() method called?
             if self.done:
                 break
+        # Signal done with msg delivery:
+        self.msgDelivered.set()
 
     def run(self):
         '''
@@ -268,6 +273,12 @@ class _TopicWaiter(threading.Thread):
                     if self.done:
                         break
                     else:
+                        # Wait till the message that released 
+                        # the listen() has been delivered to
+                        # all the relevant topic queues by 
+                        # _busMsgArrived: 
+                        self.msgDelivered.wait()
+                        self.msgDelivered.clear()
                         continue
             except ValueError:
                 pass
@@ -287,16 +298,17 @@ class _TopicWaiter(threading.Thread):
                 continue
         
     def stop(self):
+        
         self.done = True
+        
         # Unsubscribe from all topics, including the kludge one.
         # We call the BusAdapter's unsubscribe() method so
         # that it too gets a chance to clean up. It will
         # in turn call the removeTopic() method of this instance:
+        
         self.busModule.unsubscribeFromTopic()
         
-        # Shut down the pubsub subsystem; this *should*
-        # release the run() loop from its listen() call,
-        # but it doesn't seem to...
+        # Shut down the pubsub subsystem:
         #
         # The underlying redis-py closes connections to the
         # Redis server when doing the unsubscribes above, and then

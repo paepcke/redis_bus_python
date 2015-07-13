@@ -121,7 +121,7 @@ class Publisher(threading.Thread):
     '''
     
     def __init__(self, msg, topicName):
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name=topicName + 'TestPublisherThread')
         self.msg = msg
         self.topicName = topicName
         self.rserver = redis.StrictRedis()
@@ -142,7 +142,7 @@ class ReceptionTester(threading.Thread):
     '''
     
     def __init__(self, correctValue=None, beSynchronous=False):
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name='ReceptionTesterThread')
         self.correctValue = correctValue
         self.beSynchronous = beSynchronous
         

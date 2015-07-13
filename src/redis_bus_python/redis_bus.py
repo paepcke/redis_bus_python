@@ -41,14 +41,6 @@ class BusAdapter(object):
     content, topic name, and time stamps can be obtained.
     '''
     
-    # Time interval after which delivery threads will 
-    # temporarily stop looking at their delivery queue
-    # to check whether someone called stop() on the thread.
-
-    #*********_DELIVERY_THREAD_PAUSE_INTERVAL = 2 # seconds
-    #***** BAD: _DELIVERY_THREAD_PAUSE_INTERVAL = None # seconds
-    _DELIVERY_THREAD_PAUSE_INTERVAL = 0.001 # seconds
-    
     _DO_BLOCK = True
 
     def __init__(self, host='localhost', port=6379, db=0):
@@ -58,7 +50,7 @@ class BusAdapter(object):
 
         self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
-        self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db)
+        self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db, threadName='TopicWaiterThread')
         self.topicWaiterThread.setDaemon(True)
         self.topicWaiterThread.start()
         
@@ -213,7 +205,7 @@ class BusAdapter(object):
                 # Wait for thread to finish; timeout is a bit more
                 # than the 'stop-looking-at-queue' timeout used to check
                 # for periodic thread stoppage:
-                deliveryThread.join(BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL + 0.5)
+                deliveryThread.join()
             self.topicThreads = {}
         else:
             try:
@@ -221,7 +213,7 @@ class BusAdapter(object):
                 # Wait for thread to finish; timeout is a bit more
                 # than the 'stop-looking-at-queue' timeout used to check
                 # for periodic thread stoppage:
-                self.topicThreads[topicName].join(BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL + 0.5)
+                self.topicThreads[topicName].join()
                 
                 del self.topicThreads[topicName]
             except KeyError:
@@ -278,7 +270,7 @@ class BusAdapter(object):
             # Wait just a bit longer than the periodic
             # 'check whether to stop' timeout of the
             # delivery threads' queue hanging: 
-            topicThread.join(BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL + 0.5)
+            topicThread.join()
 
 # --------------------------  Private Methods ---------------------
 
@@ -372,7 +364,7 @@ class DeliveryThread(threading.Thread):
         :param context: any structure useful to the delivery function
         :type context: <any>
         '''
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name=topicName + 'Thread')
         self.deliveryQueue = deliveryQueue
         self.deliveryFunc  = deliveryFunc
         self.context       = context
@@ -381,16 +373,30 @@ class DeliveryThread(threading.Thread):
     def stop(self):
         self.done = True
         
+        # Put anything into the queue to
+        # release the get() in the run() method.
+        # This method yields a faster 
+        # stoppage than using a timeout in the get():
+        
+        self.deliveryQueue.put_nowait('x')
+        
     def run(self):
         
         while not self.done:
-            try:
-                busMsg = self.deliveryQueue.get(DeliveryThread.DO_BLOCK, BusAdapter._DELIVERY_THREAD_PAUSE_INTERVAL)
-            except Queue.Empty:
-                # Planned pause in hanging on queue:
-                # if anyone called stop(), then we'll
-                # fall out of the loop:
-                continue
+            
+            # Block indefinitely, or until the stop() method 
+            # has been called:
+            
+            busMsg = self.deliveryQueue.get(DeliveryThread.DO_BLOCK)
+            
+            # check whether stop() was called; if so,
+            # that stop() method will have placed an item
+            # into the deliveryQueue to release the above get().
+            # Just close down the thread:
+            if self.done:
+                return
+            
+            # Call the delivery callback:
             self.deliveryFunc(busMsg, self.context)
 
 
