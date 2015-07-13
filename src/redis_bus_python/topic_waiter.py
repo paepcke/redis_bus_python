@@ -45,6 +45,10 @@ class _TopicWaiter(threading.Thread):
         :type busAdapter: BusAdapter
         '''
 
+        #***************
+        self.rxedMsgs = 0
+        #***************
+
         threading.Thread.__init__(self, name=threadName)
         self.busModule = busAdapter
         
@@ -208,8 +212,13 @@ class _TopicWaiter(threading.Thread):
         :param rawRedisBusMsg: raw message from the Redis system
         :type rawRedisBusMsg: dict
         '''
-        # Push the msg into a thread-safe queue;
-        # for the message's topic:
+        #****************
+        self.rxedMsgs += 1
+        print('Rxed: %d' % self.rxedMsgs)
+        #****************
+        
+        # Push the msg into all thread-safe queues
+        # that are waiting for this topic:
         topic   = rawRedisBusMsg['channel']
         # Entire message text:
         totalContent = rawRedisBusMsg['data']

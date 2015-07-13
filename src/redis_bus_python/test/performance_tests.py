@@ -17,6 +17,7 @@ import traceback
 
 from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
+from redis_bus_python.schoolbus_exceptions import SyncCallTimedOut
 
 
 class RedisPerformanceTester(object):
@@ -89,9 +90,15 @@ class RedisPerformanceTester(object):
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
 
         busMsg = BusMessage(content=msg, topicName='test')
+
         startTime = time.time()
         for _ in range(numMsgs):
-            res = self.bus.publish(busMsg, sync=True) #@UnusedVariable
+            try:
+                res = self.bus.publish(busMsg, sync=True, timeout=4) #@UnusedVariable
+            except SyncCallTimedOut:
+                #printThreadTraces()
+                raise
+                
         endTime = time.time()
         self.printResult('Publishing %s msgs to a subscribed topic in same process: ' % str(numMsgs), startTime, endTime, numMsgs)
         
@@ -140,7 +147,7 @@ class ReceptionTester(threading.Thread):
                                       context=msgMd5)
         self.eventForStopping = threading.Event()
         self.done = False
-        
+                
     def messageReceiver(self, busMsg, context=None):
         '''
         Method that is called with each received message.
@@ -159,7 +166,7 @@ class ReceptionTester(threading.Thread):
                 
         if self.beSynchronous:
             # Publish a response:
-            self.testBus.publishResponse(busMsg, busMsg.content)
+            self.testBus.publish(self.testBus.makeResponseMsg(busMsg), busMsg.content)
 
     
     def stop(self):
@@ -170,13 +177,32 @@ class ReceptionTester(threading.Thread):
         self.testBus.unsubscribeFromTopic('test')
         self.testBus.close()
 
+#**********
+def printThreadTraces():
+    sys.stderr, "\n*** STACKTRACE - START ***\n"
+    code = []
+    for threadId, stack in sys._current_frames().items():
+        code.append("\n# ThreadID: %s" % threadId)
+        for filename, lineno, name, line in traceback.extract_stack(stack):
+            code.append('File: "%s", line %d, in %s' % (filename,
+                                                        lineno, name))
+            if line:
+                code.append("  %s" % (line.strip()))
+     
+    for line in code:
+        print >> sys.stderr, line
+    print >> sys.stderr, "\n*** STACKTRACE - END ***\n"   
+    
+    while True:
+        time.sleep(5)
+#**********
         
 if __name__ == '__main__':
     tester = RedisPerformanceTester()
     # Send 10k msg of 100 bytes each to an unsubscribed topic:
     #****tester.publishToUnsubscribedTopic(10000, 100)
     #****tester.publishToSubscribedTopic(10000,100)
-    tester.syncPublishing(100,100)
+    tester.syncPublishing(10000,100)
     tester.close()
     
     #****************

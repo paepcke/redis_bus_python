@@ -22,7 +22,6 @@ from bus_message import BusMessage
 from redis_bus_python.topic_waiter import _TopicWaiter
 from schoolbus_exceptions import SyncCallTimedOut
 
-
 class BusAdapter(object):
     '''
     Provides a simple API to the Redis based SchoolBus.
@@ -47,6 +46,10 @@ class BusAdapter(object):
         '''
         Initialize the underlying redis-py library.
         '''
+
+        #******************
+        self.syncsSent = 0
+        #******************
 
         self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
@@ -118,8 +121,18 @@ class BusAdapter(object):
                 
                 # And wait for the result:
                 try:
+                    #**************************
+                    self.syncsSent += 1
+                    #**************************
                     res = resultDeliveryQueue.get(BusAdapter._DO_BLOCK, timeout)
+                    #**************************
+                    if len(res) != 100:
+                        raise ValueError('Return msg len was %d: %s' % (len(res), str(res)))
+                    #**************************
                 except Queue.Empty:
+                    #**************************
+                    print('Sent %d synced msgs.' % self.syncsSent)
+                    #**************************
                     raise SyncCallTimedOut("Synchronous publish to %s timed out before result was returned." % topicName)
                     
                 return res

@@ -46,14 +46,15 @@ class PerformanceTesterEchoServer(threading.Thread):
             called with one.uu
         :type context: <any>
         '''
-        #**********
-        print("Got msg.")
-        #**********
         if self.beSynchronous:
-            respMsg = BusMessage(content=busMsg.content, topicName=self.testBus.getResponseTopic(busMsg))
+            respMsg = self.testBus.makeResponseMsg(busMsg, busMsg.content)
             # Publish a response:
             self.testBus.publish(respMsg)
             self.numEchoed += 1
+            #**********
+            print("Msg %d" % self.numEchoed)
+            #**********
+            
 
     
     def stop(self):
