@@ -47,14 +47,11 @@ class BusAdapter(object):
         Initialize the underlying redis-py library.
         '''
 
-        #******************
-        self.syncsSent = 0
-        #******************
-
         self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
         self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db, threadName='TopicWaiterThread')
         self.topicWaiterThread.setDaemon(True)
+        
         self.topicWaiterThread.start()
         
     def publish(self, busMessage, sync=False, timeout=None, auth=None):
@@ -112,27 +109,19 @@ class BusAdapter(object):
                 # the return result; provide the result queue
                 # to the waiting handler as context for it to know where
                 # to put the result value:
+
                 self.subscribeToTopic(returnTopic,
                                       deliveryCallback=self.resultDeliveryFunc, 
                                       context=resultDeliveryQueue)
-            
+
                 # Finally: post the request...; 
                 self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
                 
                 # And wait for the result:
                 try:
-                    #**************************
-                    self.syncsSent += 1
-                    #**************************
                     res = resultDeliveryQueue.get(BusAdapter._DO_BLOCK, timeout)
-                    #**************************
-                    if len(res) != 100:
-                        raise ValueError('Return msg len was %d: %s' % (len(res), str(res)))
-                    #**************************
+                    
                 except Queue.Empty:
-                    #**************************
-                    print('Sent %d synced msgs.' % self.syncsSent)
-                    #**************************
                     raise SyncCallTimedOut("Synchronous publish to %s timed out before result was returned." % topicName)
                     
                 return res
@@ -142,6 +131,7 @@ class BusAdapter(object):
                 # result is always left without a subscription so that
                 # Redis will destroy it:
                 self.unsubscribeFromTopic(returnTopic)
+
             
         else:
             # Not a synchronous call; just publish the request:

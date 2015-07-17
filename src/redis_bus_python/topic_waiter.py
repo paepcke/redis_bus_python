@@ -3,7 +3,6 @@ Created on May 19, 2015
 
 @author: paepcke
 '''
-import Queue
 import functools
 import json
 import threading
@@ -44,10 +43,6 @@ class _TopicWaiter(threading.Thread):
         :param busAdapter: BusAdapter object that created this thread.
         :type busAdapter: BusAdapter
         '''
-
-        #***************
-        self.rxedMsgs = 0
-        #***************
 
         threading.Thread.__init__(self, name=threadName)
         self.busModule = busAdapter
@@ -212,11 +207,6 @@ class _TopicWaiter(threading.Thread):
         :param rawRedisBusMsg: raw message from the Redis system
         :type rawRedisBusMsg: dict
         '''
-        #****************
-        self.rxedMsgs += 1
-        print('Rxed: %d' % self.rxedMsgs)
-        #****************
-        
         # Push the msg into all thread-safe queues
         # that are waiting for this topic:
         topic   = rawRedisBusMsg['channel']
