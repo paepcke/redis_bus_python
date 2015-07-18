@@ -6,7 +6,6 @@ Created on May 19, 2015
 import functools
 import json
 import threading
-import uuid
 
 import redis
 
@@ -59,9 +58,8 @@ class _TopicWaiter(threading.Thread):
         
         self.deliveryQueues = {}
 
-        # Use the recommended way of stopping a thread:
-        # Set a variable that the thread checks periodically:
-        self.done = False
+        # Event for stopping this thread:
+        self.doneEvent = threading.Event()
         
         self.rserver = redis.StrictRedis(host=host, port=port, db=db)
         
@@ -69,17 +67,12 @@ class _TopicWaiter(threading.Thread):
         # The ignore_subscribe_messages=True prevents our message
         # handlers to constantly get called with confirmations of our
         # own publish/subscribe and other commands to the Redis server:
+        
         self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
         
         # Function (rather than method) to use as callback when
         # subscribing to the underlying Redis system:
         self.allTopicsDeliveryFunc = functools.partial(self._busMsgArrived)
-        
-        # When no topics are subscribed to, the pubsub instance's listen()
-        # iterator runs dry, dropping us out of the loop in the run() method.
-        # So: a kludge: subscribe to a topic that will never be used:
-        self.secretTopic = str(uuid.uuid4())
-        self.addTopic(self.secretTopic, self.allTopicsDeliveryFunc)
         
     def addTopic(self, topicName, deliveryQueue):
         '''
@@ -160,12 +153,8 @@ class _TopicWaiter(threading.Thread):
         :return: list of topics to which subscriptions have been established.
         :rtype: (String)
         '''
-        
-        # We don't want to return the topic we subscribed to
-        # just to keep listen() from returning right away:
-        trueTopics = self.deliveryQueues.keys()
-        trueTopics.remove(self.secretTopic)
-        return trueTopics
+
+        return self.deliveryQueues.keys()
 
     def subscribedTo(self, topicName):
         '''
@@ -229,7 +218,7 @@ class _TopicWaiter(threading.Thread):
         # Place these into a BusMessage, making each key an instance variable:
         try:
             busMsg = BusMessage(topicName=topic, moreArgsDict=json.loads(totalContent))
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError):
             # Not valid JSON: just enter the content into the
             # new BusMessage's content property directly:
             busMsg = BusMessage(content=totalContent, topicName=topic)
@@ -249,58 +238,22 @@ class _TopicWaiter(threading.Thread):
         # on which handlers are waiting:        
         for deliveryQueue in deliveryQueues:
             deliveryQueue.put_nowait(busMsg)
-            # Was the stop() method called?
-            if self.done:
-                break
         # Signal done with msg delivery:
         self.msgDelivered.set()
 
     def run(self):
         '''
-        Hang on Redis message arrival. Whenever a message arrives,
-        set() a possibly existing :class:`threading.Event` object.
-        Call all the registered delivery functions in turn.
+        Just wait for a doneEvent to go true. The underlying
+        Redis pubsub in client.py will keep calling the _busMsgArrived
+        method, which will distribute messages to redis.bus.
         
-        Periodically check whether self.done is True, indicating that
-        thread should stop.
         '''
-        while not self.done:
-            
-            # Hang for a msg to arrive:
-            try:
-                for _ in self.pubsub.listen():
-                    if self.done:
-                        break
-                    else:
-                        # Wait till the message that released 
-                        # the listen() has been delivered to
-                        # all the relevant topic queues by 
-                        # _busMsgArrived: 
-                        self.msgDelivered.wait()
-                        self.msgDelivered.clear()
-                        continue
-            except ValueError:
-                pass
-            except AttributeError:
-                # When a message arrives after
-                # we unsubscribed to a topic, b/c it
-                # was already delivered by the server,
-                # and was being processed in redis-py's
-                # client.py, then listen() will throw
-                # an AttributeError when trying to read
-                # on a connection that was closed as
-                # part of the unsubscribe. We just check
-                # whether stop() was called on this thread,
-                # and re-enter the loop:
-                if self.done:
-                    break
-                continue
+
+        self.doneEvent.wait()
         
     def stop(self):
         
-        self.done = True
-        
-        # Unsubscribe from all topics, including the kludge one.
+        # Unsubscribe from all topics.
         # We call the BusAdapter's unsubscribe() method so
         # that it too gets a chance to clean up. It will
         # in turn call the removeTopic() method of this instance:
@@ -316,5 +269,8 @@ class _TopicWaiter(threading.Thread):
         # but is now None: 
         try:
             self.pubsub.close()
+            self.pubsub.join(1)
         except AttributeError:
             pass
+
+        self.doneEvent.set()

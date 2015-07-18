@@ -98,21 +98,21 @@ class BusAdapter(object):
             # Before publishing the request, must prepare for 
             # a function that will be invoked with the result.
             
-            try:
-                # Queue through which the thread that waits for
-                # the result will deliver the result once it arrives:
-                resultDeliveryQueue = Queue.Queue()
-                
-                returnTopic = self.getResponseTopic(busMessage)
-                
-                # Create a temporary topic for use just
-                # the return result; provide the result queue
-                # to the waiting handler as context for it to know where
-                # to put the result value:
+            # Queue through which the thread that waits for
+            # the result will deliver the result once it arrives:
+            resultDeliveryQueue = Queue.Queue()
+            
+            returnTopic = self.getResponseTopic(busMessage)
+            
+            # Create a temporary topic for use just
+            # the return result; provide the result queue
+            # to the waiting handler as context for it to know where
+            # to put the result value:
 
-                self.subscribeToTopic(returnTopic,
-                                      deliveryCallback=self.resultDeliveryFunc, 
-                                      context=resultDeliveryQueue)
+            self.subscribeToTopic(returnTopic,
+                                  deliveryCallback=self.resultDeliveryFunc, 
+                                  context=resultDeliveryQueue)
+            try:
 
                 # Finally: post the request...; 
                 self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
@@ -177,9 +177,15 @@ class BusAdapter(object):
         
         deliveryThread = DeliveryThread(topicName, msgQueueForTopic, deliveryCallback, context)
         self.topicThreads[topicName] = deliveryThread
+
+        deliveryThread.setDaemon(True)
+
+        # All incoming messages on this topic will be
+        # delivered through the msgQueueForTopic to the
+        # delivery thread, which will read from thise
+        # queue:
         
         self.topicWaiterThread.addTopic(topicName, msgQueueForTopic)
-        deliveryThread.setDaemon(True)
         deliveryThread.start()
 
 

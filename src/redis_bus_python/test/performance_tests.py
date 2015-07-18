@@ -94,7 +94,7 @@ class RedisPerformanceTester(object):
         startTime = time.time()
         for _ in range(numMsgs):
             try:
-                res = self.bus.publish(busMsg, sync=True, timeout=3600) #@UnusedVariable
+                res = self.bus.publish(busMsg, sync=True, timeout=5) #@UnusedVariable
             except SyncCallTimedOut:
                 #printThreadTraces()
                 raise
@@ -135,7 +135,7 @@ class ReceptionTester(threading.Thread):
     '''
     
     def __init__(self, msgMd5=None, beSynchronous=False):
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name='PerfTestReceptor')
         self.beSynchronous = beSynchronous
         
         self.testBus = BusAdapter()
