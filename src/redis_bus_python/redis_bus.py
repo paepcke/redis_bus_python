@@ -122,7 +122,7 @@ class BusAdapter(object):
                     res = resultDeliveryQueue.get(BusAdapter._DO_BLOCK, timeout)
                     
                 except Queue.Empty:
-                    raise SyncCallTimedOut("Synchronous publish to %s timed out before result was returned." % topicName)
+                    raise SyncCallTimedOut("Synchronous publish to topic %s timed out before result was returned." % topicName)
                     
                 return res
             
