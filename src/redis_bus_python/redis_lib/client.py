@@ -13,13 +13,13 @@ import time
 import threading
 import collections
 import time as mod_time
-from redis_lib._compat import (b, basestring, bytes, imap, iteritems, iterkeys,
+from redis_bus_python.redis_lib._compat import (b, basestring, bytes, imap, iteritems, iterkeys,
                            itervalues, izip, long, nativestr, unicode,
                            safe_unicode)
-from redis.threadedConnection import (ConnectionPool, UnixDomainSocketConnection,
+from redis_bus_python.redis_lib.threadedConnection import (ConnectionPool, UnixDomainSocketConnection,
                               SSLConnection, Token)
-from redis_lib.lock import Lock, LuaLock
-from redis.exceptions import (
+from redis_bus_python.redis_lib.lock import Lock, LuaLock
+from redis_bus_python.redis_lib.exceptions import (
     ConnectionError,
     DataError,
     ExecAbortError,
@@ -565,9 +565,6 @@ class StrictRedis(object):
         subscribe to channels and listen for messages that get published to
         them.
         """
-        #*************
-        print('Creating PubSub instance...')
-        #*************
         return PubSub(self.connection_pool, **kwargs)
 
     # COMMAND EXECUTION AND PROTOCOL PARSING
@@ -1906,12 +1903,25 @@ class StrictRedis(object):
         "Return the list of values within hash ``name``"
         return self.execute_command('HVALS', name)
 
-    def publish(self, channel, message):
-        """
+    def publish(self, channel, message, block=True):
+        '''
         Publish ``message`` on ``channel``.
         Returns the number of subscribers the message was delivered to.
-        """
-        return self.execute_command('PUBLISH', channel, message)
+        If block is True, then wait for response from Redis
+        server, which will be the number of clients the message
+        was delivered to. If block is False, the call will
+        return None as quickly as possible. The publish() may then
+        be called again.
+        
+        
+        :param channel: channel to publish to
+        :type channel: string
+        :param message: message to send
+        :type message: string
+        :param block: whether or not to await number of deliveries from server
+        :type block: bool
+        '''
+        return self.execute_command('PUBLISH', channel, message, block=True)
 
     def eval(self, script, numkeys, *keys_and_args):
         """
@@ -2072,16 +2082,8 @@ class PubSub(threading.Thread):
     def __init__(self, connection_pool, shard_hint=None,
                  ignore_subscribe_messages=False):
 
-        #*************
-        print('Pubsub init: at start')
-        #*************
-        
         threading.Thread.__init__(self, name='PubSubThread')
-        #*******self.setDaemon(True)
-        
-        #*************
-        print('Pubsub init: after thread. init')
-        #*************
+        self.setDaemon(True)
         
         self.connection_pool = connection_pool
         self.shard_hint = shard_hint
@@ -2089,10 +2091,6 @@ class PubSub(threading.Thread):
         self.done = False
         self.connection = None
        
-        #*************
-        print('Pubsub init: calling get_connection()')
-        #*************
-        
         # we need to know the encoding options for this connection in order
         # to lookup channel and pattern names for callback handlers.
         conn = connection_pool.get_connection('pubsub', shard_hint)
@@ -2106,9 +2104,6 @@ class PubSub(threading.Thread):
         
         # Start a connection to the server, ignoring
         # the (hopefully) resulting PONG:
-        #*************
-        print('Pinging')
-        #*************
         self.execute_command('PING') 
 
         # Start listening on that connection:        
@@ -2299,13 +2294,19 @@ class PubSub(threading.Thread):
 
         return ret_val
 
-    def punsubscribe(self, *args):
+    def punsubscribe(self, *args, **kwargs):
         """
         Unsubscribe from the supplied patterns. If empy, unsubscribe from
         all patterns.
         """
         if args:
             args = list_or_args(args[0], args[1:])
+            
+        try:
+            block = kwargs['block']
+        except KeyError:
+            block = False
+            
             
         # Get the access lock to the dict that
         # holds the pattern-subscriptions:
@@ -2319,15 +2320,15 @@ class PubSub(threading.Thread):
             # Send unsubscribe command to the server:
             cmdRes = self.execute_command('PUNSUBSCRIBE', *args)
     
-            # Wait for handle_message() to announce that the 
+            # If block, wait for handle_message() to announce that the 
             # punsubscribe ack from the Redis server has arrived:
-            
-            ackHappened = self.patterns.awaitUnsubscribeAck()
-            if not ackHappened:
-                # If someone called close, just return:
-                if self.done:
-                    return
-                raise ResponseError('Redis server did not acknowledge punsubscribe request within %d seconds' % PubSub.CMD_ACK_TIMEOUT)
+            if block:
+                ackHappened = self.patterns.awaitUnsubscribeAck()
+                if not ackHappened:
+                    # If someone called close, just return:
+                    if self.done:
+                        return
+                    raise ResponseError('Redis server did not acknowledge punsubscribe request within %d seconds' % PubSub.CMD_ACK_TIMEOUT)
     
             # Now update the self.patterns data structure;
             # acquire the access lock.
@@ -2393,13 +2394,18 @@ class PubSub(threading.Thread):
     
         return ret_val
 
-    def unsubscribe(self, *args):
+    def unsubscribe(self, *args, **kwargs):
         """
         Unsubscribe from the supplied channels. If empty, unsubscribe from
         all channels
         """
         if args:
             args = list_or_args(args[0], args[1:])
+
+        try:
+            block = kwargs['block']
+        except KeyError:
+            block = False
 
         # Get the access lock to the dict that
         # holds the channel subscriptions:
@@ -2412,15 +2418,16 @@ class PubSub(threading.Thread):
             # Send unsubscribe command to the server:
             cmdRes = self.execute_command('UNSUBSCRIBE', *args)
     
-            # Wait for handle_message() to announce that the 
+            # If block, wait for handle_message() to announce that the 
             # unsubscribe ack from the Redis server has arrived:
             
-            ackHappened = self.channels.awaitUnsubscribeAck()
-            if not ackHappened:
-                # If someone called close, just return:
-                if self.done:
-                    return
-                raise ResponseError('Redis server did not acknowledge unsubscribe request within %d seconds' % PubSub.CMD_ACK_TIMEOUT)
+            if block:
+                ackHappened = self.channels.awaitUnsubscribeAck()
+                if not ackHappened:
+                    # If someone called close, just return:
+                    if self.done:
+                        return
+                    raise ResponseError('Redis server did not acknowledge unsubscribe request within %d seconds' % PubSub.CMD_ACK_TIMEOUT)
     
             # Now update the self.channels data structure;
             # acquire the access lock.
@@ -2456,9 +2463,6 @@ class PubSub(threading.Thread):
         message being returned.
         """
         message_type = nativestr(response[0])
-        #********
-        #print('Got incoming: %s' % response)
-        #********
         if message_type == 'pmessage':
             message = {
                 'type': message_type,

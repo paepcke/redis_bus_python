@@ -92,8 +92,9 @@ class RedisPerformanceTester(object):
         busMsg = BusMessage(content=msg, topicName='test')
 
         startTime = time.time()
-        for _ in range(numMsgs):
+        for serialNum in range(numMsgs):
             try:
+                busMsg.id = serialNum
                 res = self.bus.publish(busMsg, sync=True, timeout=5) #@UnusedVariable
             except SyncCallTimedOut:
                 #printThreadTraces()
@@ -202,7 +203,7 @@ def printThreadTraces():
 if __name__ == '__main__':
     tester = RedisPerformanceTester()
     # Send 10k msg of 100 bytes each to an unsubscribed topic:
-    #****tester.publishToUnsubscribedTopic(10000, 100)
+    tester.publishToUnsubscribedTopic(100, 100)
     #****tester.publishToSubscribedTopic(10000,100)
-    tester.syncPublishing(10000,100)
+    #****tester.syncPublishing(3,100)
     tester.close()

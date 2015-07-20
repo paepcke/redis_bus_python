@@ -1,5 +1,5 @@
 "Core exceptions raised by the Redis client"
-from redis._compat import unicode
+from redis_bus_python.redis_lib._compat import unicode
 
 
 class RedisError(Exception):

@@ -9,10 +9,11 @@ import sys
 import threading
 import warnings
 
-from redis._compat import b, xrange, imap, byte_to_chr, unicode, bytes, long, \
+from redis_bus_python.redis_lib._compat import b, xrange, imap, byte_to_chr, unicode, bytes, long, \
     nativestr, basestring, iteritems, LifoQueue, Empty, Full, urlparse, \
     parse_qs, unquote
-from redis.exceptions import RedisError, ConnectionError, TimeoutError, \
+
+from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, TimeoutError, \
     BusyLoadingError, ResponseError, InvalidResponse, AuthenticationError, \
     NoScriptError, ExecAbortError, ReadOnlyError
 
@@ -23,10 +24,10 @@ except ImportError:
     ssl_available = False
 
 
-SYM_STAR = b('*')
-SYM_DOLLAR = b('$')
-SYM_CRLF = b('\r\n')
-SYM_EMPTY = b('')
+SYM_STAR = '*'
+SYM_DOLLAR = '$'
+SYM_CRLF = '\r\n'
+SYM_EMPTY = ''
 
 SERVER_CLOSED_CONNECTION_ERROR = "Connection closed by server."
 
@@ -89,7 +90,7 @@ class SocketLineReader(threading.Thread):
         # Make the socket non-blocking, so that
         # we can periodically check whether this
         # thread is to stop:
-        #******self._sock.settimeout(SocketLineReader.SOCKET_READ_TIMEOUT)
+        self._sock.settimeout(SocketLineReader.SOCKET_READ_TIMEOUT)
         
         self._socket_read_size = socket_read_size
         self._delivery_queue = Queue.Queue()
@@ -177,12 +178,7 @@ class SocketLineReader(threading.Thread):
                 if self._done:
                     return
                 try:
-                    #**********
-                    print('Listen to socket...')
-                    #**********
                     data = self._sock.recv(socket_read_size)
-                    #**********
-                    print('Ret from socket...')
                     if self._done:
                         return
                     if remnant is not None:
@@ -455,7 +451,7 @@ class Connection(object):
         err = None
         for res in socket.getaddrinfo(self.host, self.port, 0,
                                       socket.SOCK_STREAM):
-            family, socktype, proto, canonname, socket_address = res
+            family, socktype, proto, canonname, socket_address = res  #@UnusedVariable
             sock = None
             try:
                 sock = socket.socket(family, socktype, proto)

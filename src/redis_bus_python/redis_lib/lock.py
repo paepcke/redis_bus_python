@@ -1,9 +1,9 @@
 import threading
 import time as mod_time
 import uuid
-from redis.exceptions import LockError, WatchError
-from redis.utils import dummy
-from redis._compat import b
+from redis_bus_python.redis_lib.exceptions import LockError, WatchError
+from redis_bus_python.redis_lib.utils import dummy
+from redis_bus_python.redis_lib._compat import b
 
 
 class Lock(object):

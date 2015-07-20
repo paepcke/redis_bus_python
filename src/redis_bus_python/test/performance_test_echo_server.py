@@ -30,8 +30,6 @@ class PerformanceTesterEchoServer(threading.Thread):
     def __init__(self, beSynchronous=False):
         threading.Thread.__init__(self)
         
-        #******self.setDaemon(True)
-        
         self.beSynchronous = beSynchronous
         
         self.testBus = BusAdapter()
@@ -82,8 +80,8 @@ class PerformanceTesterEchoServer(threading.Thread):
         
         if self.mostRecentRxTime is None:
             #**********
-            printThreadTraces()
-            sys.exit()
+            #printThreadTraces()
+            #sys.exit()
             #**********
             # Nothing received yet:
             self.startTime = time.time()
@@ -98,7 +96,7 @@ class PerformanceTesterEchoServer(threading.Thread):
         # Did not receive msgs within idle time:
         self.printTiming()
         if not self.printedResetting:
-            print('Resetting')
+            print('Resetting (echoed %d)' % self.numEchoed)
             self.printedResetting = True
         self.numEchoed = 0
         self.startTime = time.time()
@@ -152,9 +150,6 @@ def printThreadTraces():
 
 def signal_handler(signal, frame):
         print('Stopping SchoolBus echo service.')
-        #***********
-        raise RuntimeError('Where was I?')
-        #***********
         echoServer.stop()
         sys.exit(0)
 

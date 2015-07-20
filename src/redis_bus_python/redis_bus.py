@@ -130,7 +130,7 @@ class BusAdapter(object):
                 # Make sure the temporary topic used for returning the
                 # result is always left without a subscription so that
                 # Redis will destroy it:
-                self.unsubscribeFromTopic(returnTopic)
+                self.unsubscribeFromTopic(returnTopic, block=False)
             
         else:
             # Not a synchronous call; just publish the request:
@@ -186,7 +186,7 @@ class BusAdapter(object):
         deliveryThread.start()
 
 
-    def unsubscribeFromTopic(self, topicName=None):
+    def unsubscribeFromTopic(self, topicName=None, block=True):
         '''
         Unsubscribes from topic. Stops the topic's thread,
         and removes it from bookkeeping so that the Thread object
@@ -199,10 +199,13 @@ class BusAdapter(object):
         
         :param topicName: name of topic to subscribe from
         :type topicName: {string | None}
+        :param block: if true, call blocks until Redis server has acknowledged
+            completion of the unsubscribe action.
+        :type block: bool
         '''
 
         # Tell the TopicWaiter to go deaf on the topic:
-        self.topicWaiterThread.removeTopic(topicName)
+        self.topicWaiterThread.removeTopic(topicName, block=block)
 
         if topicName is None:
             # Kill all topic threads:
@@ -211,7 +214,7 @@ class BusAdapter(object):
                 # Wait for thread to finish; timeout is a bit more
                 # than the 'stop-looking-at-queue' timeout used to check
                 # for periodic thread stoppage:
-                deliveryThread.join()
+                #*********deliveryThread.join()
             self.topicThreads = {}
         else:
             try:

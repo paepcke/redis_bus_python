@@ -63,31 +63,13 @@ class _TopicWaiter(threading.Thread):
         # Event for stopping this thread:
         self.doneEvent = threading.Event()
         
-        #*************
-        print('Creating rserver')
-        #*************
-        
         self.rserver = redis_lib.StrictRedis(host=host, port=port, db=db)
         
         # Create a pubsub instance for all pub/sub needs.
         # The ignore_subscribe_messages=True prevents our message
         # handlers to constantly get called with confirmations of our
         # own publish/subscribe and other commands to the Redis server:
-        
-        #*************
-        print('Calling rserver pubsub method')
-        #*************
-        
-        #********
-        self.pubsub = redis_lib.client.PubSub(self.rserver.connection_pool, ignore_subscribe_messages=True)
-
-        #self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
-        
-        
-        #*************
-        print('Return from calling rserver pubsub method: %s' % str(self.pubsub))
-        #*************
-        
+        self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
         
         # Function (rather than method) to use as callback when
         # subscribing to the underlying Redis system:
@@ -121,7 +103,7 @@ class _TopicWaiter(threading.Thread):
             # reception function as handler:
             self.pubsub.subscribe(**{topicName : self.allTopicsDeliveryFunc})
         
-    def removeTopic(self, topicName=None):
+    def removeTopic(self, topicName=None, block=True):
         '''
         Stop listening to a topic. If topicName is None,
         stop listening to all topics. See :meth:`topic_waiter._TopicWaiter.removeListener`
@@ -130,13 +112,16 @@ class _TopicWaiter(threading.Thread):
         :param topicName: name of topic to stop listening to, or None to 
             stop listening to any topic.
         :type topicName: {String | None}
+        :param block: if true, call blocks until Redis server has acknowledged
+            completion of the unsubscribe action.
+        :type block: bool
         '''
         
         # Unsubscribe in the underlying redis-py library: 
         if topicName is not None:
-            self.pubsub.unsubscribe(topicName)
+            self.pubsub.unsubscribe(topicName, block=block)
         else:
-            self.pubsub.unsubscribe()
+            self.pubsub.unsubscribe(block=block)
             
         try:
             # Remove the delivery queue(s) associated
