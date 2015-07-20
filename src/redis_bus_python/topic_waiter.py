@@ -7,7 +7,7 @@ import functools
 import json
 import threading
 
-import redis
+import redis_lib
 
 from redis_bus_python.bus_message import BusMessage
 
@@ -67,7 +67,7 @@ class _TopicWaiter(threading.Thread):
         print('Creating rserver')
         #*************
         
-        self.rserver = redis.StrictRedis(host=host, port=port, db=db)
+        self.rserver = redis_lib.StrictRedis(host=host, port=port, db=db)
         
         # Create a pubsub instance for all pub/sub needs.
         # The ignore_subscribe_messages=True prevents our message
@@ -79,7 +79,7 @@ class _TopicWaiter(threading.Thread):
         #*************
         
         #********
-        self.pubsub = redis.client.PubSub(self.rserver.connection_pool, ignore_subscribe_messages=True)
+        self.pubsub = redis_lib.client.PubSub(self.rserver.connection_pool, ignore_subscribe_messages=True)
 
         #self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
         
