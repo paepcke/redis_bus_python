@@ -44,6 +44,8 @@ class _TopicWaiter(threading.Thread):
         '''
 
         threading.Thread.__init__(self, name=threadName)
+        self.setDaemon(True)
+        
         self.busModule = busAdapter
         
         # An event to signal when _busMsgArrived
@@ -61,6 +63,10 @@ class _TopicWaiter(threading.Thread):
         # Event for stopping this thread:
         self.doneEvent = threading.Event()
         
+        #*************
+        print('Creating rserver')
+        #*************
+        
         self.rserver = redis.StrictRedis(host=host, port=port, db=db)
         
         # Create a pubsub instance for all pub/sub needs.
@@ -68,7 +74,20 @@ class _TopicWaiter(threading.Thread):
         # handlers to constantly get called with confirmations of our
         # own publish/subscribe and other commands to the Redis server:
         
-        self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
+        #*************
+        print('Calling rserver pubsub method')
+        #*************
+        
+        #********
+        self.pubsub = redis.client.PubSub(self.rserver.connection_pool, ignore_subscribe_messages=True)
+
+        #self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
+        
+        
+        #*************
+        print('Return from calling rserver pubsub method: %s' % str(self.pubsub))
+        #*************
+        
         
         # Function (rather than method) to use as callback when
         # subscribing to the underlying Redis system:

@@ -10,8 +10,8 @@ import signal
 import sys
 import threading
 import time
+import traceback
 
-from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
 
 
@@ -29,6 +29,9 @@ class PerformanceTesterEchoServer(threading.Thread):
     
     def __init__(self, beSynchronous=False):
         threading.Thread.__init__(self)
+        
+        #******self.setDaemon(True)
+        
         self.beSynchronous = beSynchronous
         
         self.testBus = BusAdapter()
@@ -67,6 +70,10 @@ class PerformanceTesterEchoServer(threading.Thread):
             self.testBus.publish(respMsg)
             self.numEchoed += 1
 
+            #************
+            #print('Echoed one.')
+            #************
+
             if self.numEchoed % 1000 == 0:
                 print('Echoed %d' % self.numEchoed)
             
@@ -74,6 +81,10 @@ class PerformanceTesterEchoServer(threading.Thread):
         currTime = time.time()
         
         if self.mostRecentRxTime is None:
+            #**********
+            printThreadTraces()
+            sys.exit()
+            #**********
             # Nothing received yet:
             self.startTime = time.time()
             self.startIdleTimer()
@@ -118,13 +129,38 @@ class PerformanceTesterEchoServer(threading.Thread):
         self.testBus.unsubscribeFromTopic('test')
         self.testBus.close()
 
+#**********
+def printThreadTraces():
+    sys.stderr, "\n*** STACKTRACE - START ***\n"
+    code = []
+    for threadId, stack in sys._current_frames().items():
+        code.append("\n# ThreadID: %s" % threadId)
+        for filename, lineno, name, line in traceback.extract_stack(stack):
+            code.append('File: "%s", line %d, in %s' % (filename,
+                                                        lineno, name))
+            if line:
+                code.append("  %s" % (line.strip()))
+     
+    for line in code:
+        print >> sys.stderr, line
+    print >> sys.stderr, "\n*** STACKTRACE - END ***\n"   
+    
+    while True:
+        time.sleep(5)
+#**********
+
+
 def signal_handler(signal, frame):
         print('Stopping SchoolBus echo service.')
+        #***********
+        raise RuntimeError('Where was I?')
+        #***********
         echoServer.stop()
         sys.exit(0)
 
 if __name__ == '__main__':
 
+    signal.signal(signal.SIGUSR1, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     
     echoServer = PerformanceTesterEchoServer(beSynchronous=True)

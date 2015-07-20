@@ -136,6 +136,8 @@ class ReceptionTester(threading.Thread):
     
     def __init__(self, msgMd5=None, beSynchronous=False):
         threading.Thread.__init__(self, name='PerfTestReceptor')
+        self.setDaemon(True)
+        
         self.beSynchronous = beSynchronous
         
         self.testBus = BusAdapter()

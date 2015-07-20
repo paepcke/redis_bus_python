@@ -9,6 +9,7 @@ TODO:
              whose name is the incoming msg's ID number
 
    o TopicWaiter: maybe take out the event facility (e.g. removeTopicEvent())
+   o Test unicode topics/ids/content
 '''
 
 import Queue
@@ -50,7 +51,6 @@ class BusAdapter(object):
         self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
         self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db, threadName='TopicWaiterThread')
-        self.topicWaiterThread.setDaemon(True)
         
         self.topicWaiterThread.start()
         
@@ -131,7 +131,6 @@ class BusAdapter(object):
                 # result is always left without a subscription so that
                 # Redis will destroy it:
                 self.unsubscribeFromTopic(returnTopic)
-
             
         else:
             # Not a synchronous call; just publish the request:
@@ -177,8 +176,6 @@ class BusAdapter(object):
         
         deliveryThread = DeliveryThread(topicName, msgQueueForTopic, deliveryCallback, context)
         self.topicThreads[topicName] = deliveryThread
-
-        deliveryThread.setDaemon(True)
 
         # All incoming messages on this topic will be
         # delivered through the msgQueueForTopic to the
@@ -374,6 +371,8 @@ class DeliveryThread(threading.Thread):
         :type context: <any>
         '''
         threading.Thread.__init__(self, name=topicName + 'Thread')
+        self.setDaemon(True)
+        
         self.deliveryQueue = deliveryQueue
         self.deliveryFunc  = deliveryFunc
         self.context       = context

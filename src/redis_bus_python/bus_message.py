@@ -16,7 +16,7 @@ class BusMessage(object):
     '''
 
 
-    def __init__(self, content=None, topicName=None, moreArgsDict=None, **kwds):
+    def __init__(self, content=None, topicName=None, moreArgsDict=None, **kwargs):
         '''
         Create a bus message. The optional parameter moreArgsDict adds
         the respective key/values as instance variables. So if
@@ -36,20 +36,51 @@ class BusMessage(object):
         '''
         self.content    = content
         self._topicName = topicName
+        # If moreArgsDict includes a key 'id' then
+        # the following _id value will be overwritten
+        # below. That's by design, so that one can
+        # feed a json-decoded incoming bus msg in via
+        # moreArgsDict, and have this BusMessage instance
+        # reflect that incoming json-formatted message.
+        # Without moreArgsDict or in the absence of 
+        # an 'id' key in moreArgsDict, the following UUID 
+        # remains this BusMessage instance's id:
+        
         self._id        = self._createUuid()
+        
         # Init the time field, though that might be
-        # modified by the BusAdapter.publish() method
+        # modified by the BusAdapter.publish() method.
+        # See comment above for _time being overwritten:
+        
         self._time  	= int(time.time()*1000)
 
         if moreArgsDict is not None:
             if type(moreArgsDict) != dict:
                 raise ValueError("The moreArgsDict parameter of BusMessage must be a dict, None, or left out entirely; was '%s'" % str(moreArgsDict))
             for instVarName,instVarValue in list(moreArgsDict.items()):
+
                 # Ensure that the instance variable name is not unicode:
                 finalInstVarName = instVarName.encode('UTF-8', 'ignore')
-                setattr(self, finalInstVarName, instVarValue)
                 
-        for instVarName,instVarValue in list(kwds.items()):
+                # For values: if incoming dict was created by json.loads()
+                # then all values will be unicode. Determine whether
+                # the original was likely to have been UTF8 instead,
+                # and if so, return value to UTF8:
+                try:
+                    # Will throw an attribute error if instVarValue
+                    # is not a string; we catch that:
+                    decodedVal = instVarValue.encode('UTF8')
+                    # At least the value could be turned into UTF8;
+                    # It could still be true unicode if encode()
+                    # was able to *convert* to UTF8, such as
+                    # 'Fl\xc3\xbcgel':
+                    finalInstVarVal = decodedVal if decodedVal == instVarValue else instVarValue
+                except (UnicodeDecodeError, AttributeError):
+                    finalInstVarVal = instVarValue
+                
+                setattr(self, finalInstVarName, finalInstVarVal)
+                
+        for instVarName,instVarValue in list(kwargs.items()):
             setattr(self, instVarName, instVarValue)
                 
     @property
