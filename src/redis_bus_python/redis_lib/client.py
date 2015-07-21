@@ -296,6 +296,11 @@ class StrictRedis(object):
     the commands are sent and received to the Redis server
     """
     
+    # Time to wait for an orphaned Redis server
+    # return value before assuming it will never
+    # come:
+    REDIS_RESPONSE_TIMEOUT = 0.3 # sec
+    
     RESPONSE_CALLBACKS = dict_merge(
         string_keys_to_dict(
             'AUTH EXISTS EXPIRE EXPIREAT HEXISTS HMSET MOVE MSETNX PERSIST '
@@ -569,13 +574,45 @@ class StrictRedis(object):
 
     # COMMAND EXECUTION AND PROTOCOL PARSING
     def execute_command(self, *args, **options):
-        "Execute a command and return a parsed response"
+        '''
+        Execute a command and return a parsed response,
+        or None, if no response is to be obtained.
+        By default, the keyword arg 'block' is True,
+        and the method executes the given command, and
+        then hangs for the Redis server's response.
+        If block=False, then this method always returns
+        None, and the return value is discarded once
+        it arrives. An example command is:
+                ('PUBLISH', 
+                 'test', 
+                 '{"content": "foo", "id" : "myId", "time" : 1437423922098}')
+        
+        :param args: sequence whose first element must be a Redis command
+        :type args: {[string] | (string)}
+        :param blocking: if True, wait for command's return, else return None, 
+            and discard the return value.
+        :type blocking: bool
+        '''
+        
         pool = self.connection_pool
         command_name = args[0]
         connection = pool.get_connection(command_name, **options)
         try:
-            connection.send_command(*args)
-            return self.parse_response(connection, command_name, **options)
+            block = options['block']
+        except KeyError:
+            block = True
+            
+        try:
+            if block:
+                connection.send_command(*args)
+                return self.parse_response(connection, command_name, **options)
+            else:
+                connection.expectingOrphanedReturn = True
+                # Time after which we assume that result won't come back:
+                connection.orphanExpirationTime = time.time() + StrictRedis.REDIS_RESPONSE_TIMEOUT
+                connection.send_command(*args)
+                return None
+
         except (ConnectionError, TimeoutError) as e:
             connection.disconnect()
             if not connection.retry_on_timeout and isinstance(e, TimeoutError):
@@ -1910,9 +1947,9 @@ class StrictRedis(object):
         If block is True, then wait for response from Redis
         server, which will be the number of clients the message
         was delivered to. If block is False, the call will
-        return None as quickly as possible. The publish() may then
-        be called again.
-        
+        return None as quickly as possible. The publish() methoed
+        may then be called again without delay. The return value
+        message from the server will then be discarded later.
         
         :param channel: channel to publish to
         :type channel: string
@@ -1921,7 +1958,7 @@ class StrictRedis(object):
         :param block: whether or not to await number of deliveries from server
         :type block: bool
         '''
-        return self.execute_command('PUBLISH', channel, message, block=True)
+        return self.execute_command('PUBLISH', channel, message, block=block)
 
     def eval(self, script, numkeys, *keys_and_args):
         """

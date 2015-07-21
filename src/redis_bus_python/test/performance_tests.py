@@ -36,7 +36,7 @@ class RedisPerformanceTester(object):
     def close(self):
         self.bus.close()
     
-    def publishToUnsubscribedTopic(self, numMsgs, msgLen):
+    def publishToUnsubscribedTopic(self, numMsgs, msgLen, block=True):
         '''
         Publish given number of messages to a topic that
         nobody is subscribed to. Each msg is of length msgLen.
@@ -50,11 +50,14 @@ class RedisPerformanceTester(object):
         busMsg = BusMessage(content=msg, topicName='test')
         startTime = time.time()
         for _ in range(numMsgs):
-            self.bus.publish(busMsg)
+            self.bus.publish(busMsg, block=block)
         endTime = time.time()
-        self.printResult('Publishing %s msgs to empty space: ' % str(numMsgs), startTime, endTime, numMsgs)
+        #************
+        print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
+        #************
+        self.printResult('Publishing %s msgs to empty space (block==%s): ' % (str(numMsgs),str(block)), startTime, endTime, numMsgs)
     
-    def publishToSubscribedTopic(self, numMsgs, msgLen):
+    def publishToSubscribedTopic(self, numMsgs, msgLen, block=True, sameProcessListener=True):
         '''
         Publish given number of messages to a topic that
         a thread in this same process is subscribed to.
@@ -65,6 +68,12 @@ class RedisPerformanceTester(object):
         :type numMsgs:
         :param msgLen:
         :type msgLen:
+        :param block: if True, publish() will wait for server confirmation.
+        :type block: bool
+        :param sameProcessListener: if True, the listener to messages will be a thread in this
+            Python process (see below). Else an outside process is expected to be subscribed
+            to 'test'.
+        :type sameProcessListener: bool
         '''
 
         (msg, md5) = self.createMessage(msgLen)
@@ -76,16 +85,19 @@ class RedisPerformanceTester(object):
             
             startTime = time.time()
             for _ in range(numMsgs):
-                self.bus.publish(busMsg)
+                self.bus.publish(busMsg, block=block)
             endTime = time.time()
-            self.printResult('Publishing %s msgs to a subscribed topic in same process: ' % str(numMsgs), startTime, endTime, numMsgs)
+            #************
+            print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
+            #************
+            self.printResult('Publishing %s msgs to a subscribed topic (block==%s): ' % (str(numMsgs), str(block)), startTime, endTime, numMsgs)
         except Exception:
             raise
         finally:
             listenerThread.stop()
             listenerThread.join(3)
             
-    def syncPublishing(self, numMsgs, msgLen):
+    def syncPublishing(self, numMsgs, msgLen, block=True):
 
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
 
@@ -95,13 +107,16 @@ class RedisPerformanceTester(object):
         for serialNum in range(numMsgs):
             try:
                 busMsg.id = serialNum
-                res = self.bus.publish(busMsg, sync=True, timeout=5) #@UnusedVariable
+                res = self.bus.publish(busMsg, sync=True, timeout=5, block=block) #@UnusedVariable
             except SyncCallTimedOut:
                 #printThreadTraces()
                 raise
                 
         endTime = time.time()
-        self.printResult('Publishing %s msgs to a subscribed topic in same process: ' % str(numMsgs), startTime, endTime, numMsgs)
+        #************
+        print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
+        #************
+        self.printResult('Publishing %s synch msgs (block==%s): ' % (str(numMsgs), str(block)), startTime, endTime, numMsgs)
         
     
     def createMessage(self, msgLen):
@@ -202,8 +217,26 @@ def printThreadTraces():
         
 if __name__ == '__main__':
     tester = RedisPerformanceTester()
-    # Send 10k msg of 100 bytes each to an unsubscribed topic:
-    tester.publishToUnsubscribedTopic(100, 100)
-    #****tester.publishToSubscribedTopic(10000,100)
-    #****tester.syncPublishing(3,100)
+    
+    print('------Publish to unsubscribed topic; block == False------')
+    tester.publishToUnsubscribedTopic(10000, 100, block=False)
+    print('------Publish to unsubscribed topic; block == True------')
+    tester.publishToUnsubscribedTopic(10000, 100, block=True)
+    print('--------------------')
+    
+    sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
+    sys.stdin.readline()
+
+    print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
+    tester.publishToSubscribedTopic(10000,100, block=False, sameProcessListener=False)
+    print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
+    tester.publishToSubscribedTopic(10000,100, block=True, sameProcessListener=False)
+    print('--------------------')    
+    
+    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
+    tester.syncPublishing(10000,100, block=False)
+    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
+    tester.syncPublishing(10000,100, block=True)
+    print('--------------------')    
+
     tester.close()

@@ -10,6 +10,10 @@ TODO:
 
    o TopicWaiter: maybe take out the event facility (e.g. removeTopicEvent())
    o Test unicode topics/ids/content
+   o threadedConnection.BlockingConnectionPool.get_connection:
+         make it eat orphaned input if needed, as I did in
+         corresponding ConnectionPool method.
+   
 '''
 
 import Queue
@@ -54,7 +58,7 @@ class BusAdapter(object):
         
         self.topicWaiterThread.start()
         
-    def publish(self, busMessage, sync=False, timeout=None, auth=None):
+    def publish(self, busMessage, sync=False, timeout=None, block=True, auth=None):
         '''
         Main method for publishing a message. 
         If you are publishing a response to a synchronous call, set 
@@ -68,6 +72,10 @@ class BusAdapter(object):
         :param timeout: used only if sync == True. Amount of time to wait for
             callee to return a value. If None, wait forever. Value is in (fractional) seconds.
         :type timeout: {float | None}
+        :param block: if True, the call will block until the Redis server has returned
+            the number of channels to which the message was delivered. If False, 
+            the method returns immediately with None, unless sync == True.
+        :type block: bool
         :param auth: any authentication to be included in the bus message.
         :type auth: String
         '''
@@ -115,7 +123,7 @@ class BusAdapter(object):
             try:
 
                 # Finally: post the request...; 
-                self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
+                self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
                 
                 # And wait for the result:
                 try:
@@ -134,7 +142,7 @@ class BusAdapter(object):
             
         else:
             # Not a synchronous call; just publish the request:
-            self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict))
+            self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
           
     def subscribeToTopic(self, topicName, deliveryCallback=None, context=None):
         '''

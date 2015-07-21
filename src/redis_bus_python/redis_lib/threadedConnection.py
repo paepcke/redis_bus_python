@@ -1,21 +1,23 @@
 from __future__ import with_statement
 
 import Queue
+import errno
 from itertools import chain
 import os
 from select import select
 import socket
 import sys
 import threading
+import time
 import warnings
 
-from redis_bus_python.redis_lib._compat import b, xrange, imap, byte_to_chr, unicode, bytes, long, \
-    nativestr, basestring, iteritems, LifoQueue, Empty, Full, urlparse, \
-    parse_qs, unquote
+from redis_bus_python.redis_lib._compat import b, xrange, imap, byte_to_chr, \
+    unicode, bytes, long, nativestr, basestring, iteritems, LifoQueue, Empty, Full, \
+    urlparse, parse_qs, unquote
+from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
+    TimeoutError, BusyLoadingError, ResponseError, InvalidResponse, \
+    AuthenticationError, NoScriptError, ExecAbortError, ReadOnlyError
 
-from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, TimeoutError, \
-    BusyLoadingError, ResponseError, InvalidResponse, AuthenticationError, \
-    NoScriptError, ExecAbortError, ReadOnlyError
 
 try:
     import ssl
@@ -188,6 +190,13 @@ class SocketLineReader(threading.Thread):
                     # Just check for whether to stop, and
                     # go right into recv again:
                     continue
+                except socket.error as e:
+                    if e.args[0] == errno.EAGAIN:
+                        time.sleep(0.3)
+                        continue
+                    else:
+                        raise
+                    
                 # An empty string indicates the server shutdown the socket
                 if isinstance(data, bytes) and len(data) == 0:
                     raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
@@ -327,6 +336,7 @@ class PythonParser(BaseParser):
         # int value
         elif byte == ':':
             response = long(response)
+            
         # bulk response
         elif byte == '$':
             length = int(response)
@@ -354,6 +364,7 @@ DefaultParser = PythonParser
 
 class Connection(object):
     "Manages TCP communication to and from a Redis server"
+    
     description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s>"
 
     def __init__(self, host='localhost', port=6379, db=0, password=None,
@@ -371,6 +382,8 @@ class Connection(object):
         self.socket_connect_timeout = socket_connect_timeout or socket_timeout
         self.socket_keepalive = socket_keepalive
         self.socket_keepalive_options = socket_keepalive_options or {}
+        self.expectingOrphanedReturn = False
+        self.orphanExpirationTime = time.time()
         self.retry_on_timeout = retry_on_timeout
         self.encoding = encoding
         self.encoding_errors = encoding_errors
@@ -877,14 +890,66 @@ class ConnectionPool(object):
                 self.reset()
 
     def get_connection(self, command_name, *keys, **options):
-        "Get a connection from the pool"
+        '''
+        Get a connection from the pool. If a free connection
+        is expecting an orphaned return value from, e.g. a prior
+        non-blocking call to publish(), then we try to retrieve
+        and discard that return value from the candidate connection's
+        socket. If that value isn't available yet, we pick a different
+        connection. 
+        
+        '''
+        
         self._checkpid()
+        
         try:
-            connection = self._available_connections.pop()
+            found_conn = False
+            connectionsOrphanWaiting = []
+            while not found_conn:
+                # Get connection from the pool
+                connection = self._available_connections.pop()
+                
+                # Is this connection expecting a return value
+                # from the server that is to be discarded? E.g.
+                # from a prior non-blocking publish() call:
+                if connection.expectingOrphanedReturn:
+                    # Check whether that return val arrived:
+                    sock = connection._sock
+                    (inputSrcs, outputSrcs, eventSrcs) = select([sock],[],[],0) #@UnusedVariable
+                    if len(inputSrcs) > 0:
+                        # Scrape the old server return value out of the socket:
+                        sock.setblocking(0)
+                        try:
+                            sock.recv(1024)
+                        except socket.error:
+                            # If server hung up, or other issue, just fly on:
+                            pass
+                        sock.setblocking(1)
+                        connection.expectingOrphanedReturn = False
+                        found_conn = True
+
+                    elif time.time() > connection.orphanExpirationTime:
+                        # Give up expecting the return value, and
+                        # use the connection:
+                        connection.expectingOrphanedReturn = False
+                        found_conn = True                        
+                    else:
+                        # Return value not received yet: get a 
+                        # different connection instance from the pool,
+                        connectionsOrphanWaiting.append(connection)
+                        
         except IndexError:
+            # No available connection in the pool
+            # (Or all are waiting for Redis server returns,
+            # and their expiration time hasn't come):
             connection = self.make_connection()
+            # Throw the still-orphaned connections back into the pool
+            # to check for expiration next time:
+            self._available_connections.extend(connectionsOrphanWaiting)
+
         self._in_use_connections.add(connection)
         return connection
+
 
     def make_connection(self):
         "Create a new connection"
