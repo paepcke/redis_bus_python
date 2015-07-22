@@ -2183,6 +2183,7 @@ class PubSub(threading.Thread):
             else:
                 # An actual error occurred:
                 print('Exit from client: %s' % `e`)
+                raise
                 return
 
     def __del__(self):
@@ -2499,6 +2500,10 @@ class PubSub(threading.Thread):
         with a message handler, the handler is invoked instead of a parsed
         message being returned.
         """
+        
+        if not isinstance(response, basestring):
+            return response
+        
         message_type = nativestr(response[0])
         if message_type == 'pmessage':
             message = {

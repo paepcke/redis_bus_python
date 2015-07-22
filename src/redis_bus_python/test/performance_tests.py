@@ -9,6 +9,7 @@ Created on Jul 8, 2015
 import functools
 import hashlib
 import random
+import socket
 import string
 import sys
 import threading
@@ -30,6 +31,9 @@ class RedisPerformanceTester(object):
         '''
         Constructor
         '''
+        self.host = 'localhost'
+        self.port = 6379
+        
         self.letterChoice = string.letters
         self.bus = BusAdapter()
         
@@ -118,6 +122,37 @@ class RedisPerformanceTester(object):
         #************
         self.printResult('Publishing %s synch msgs (block==%s): ' % (str(numMsgs), str(block)), startTime, endTime, numMsgs)
         
+        
+    def rawIronPublish(self, numMsgs, msgLen, block=True):
+        
+        sock = self.bus.topicWaiterThread.pubsub.connection._sock
+        sock.setblocking(1)
+        sock.settimeout(2)
+        
+        (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
+        wireMsg = '*3\r\n$7\r\nPUBLISH\r\n$4\r\ntest\r\n$190\r\n{"content": \r\n "dRkLSUQxFVSHuVnEekLtfPsXULtWEESQwaRYZtxpFGYRGphNTkRQAMPJfDxoGKOKPCMmptZBriVVfV\r\n LvYisehirsYSHdDrhXRgGl", "id": "a62b8cde-6bf6-4f75-a1f3-e768bec4d5e1", "time": 1437516321946}\r\n'
+        num_sent = 0
+        start_time = time.time()
+        try:
+            for _ in range(numMsgs):
+                sock.sendall(wireMsg)
+                num_sent += 1
+    #             if num_sent % 1000 == 0:
+    #                 print('Sent %d' % num_sent)
+                if block:
+                    #time.sleep(0.01)
+                    numListeners = sock.recv(1024) #@UnusedVariable
+        except socket.timeout:
+            end_time = time.time()
+            self.printResult('Sending on raw socket; result timeout after %d msgs.' % num_sent, start_time, end_time, numMsgs)
+            sys.exit()  
+        except Exception:
+            end_time = time.time()
+            self.printResult('Sending on raw socket; error %d msgs.' % num_sent, start_time, end_time, numMsgs)
+            raise
+            
+        end_time = time.time()
+        self.printResult('Sent %d msgs on raw socket; block==%s' % (numMsgs, block), start_time, end_time, numMsgs)
     
     def createMessage(self, msgLen):
         '''
@@ -131,6 +166,33 @@ class RedisPerformanceTester(object):
         for _ in range(msgLen):
             msg.append(random.choice(self.letterChoice))
         return (str(msg), hashlib.md5(str(msg)).hexdigest())
+
+    def _connect(self):
+
+        err = None
+        # Get addr options for Redis host/port, with arbitrary
+        # socket family (the 0), and stream type:
+        for res in socket.getaddrinfo(self.host, self.port, 0,
+                                      socket.SOCK_STREAM):
+            family, socktype, proto, canonname, socket_address = res  #@UnusedVariable
+            sock = None
+            try:
+                sock = socket.socket(family, socktype, proto)
+                # TCP_NODELAY
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                
+                sock.connect((self.host, self.port))                
+                return sock
+
+            except socket.error as _:
+                err = _
+                if sock is not None:
+                    sock.close()
+
+        if err is not None:
+            raise err
+        raise socket.error("socket.getaddrinfo returned an empty list")
+
     
     def printResult(self, headerMsg, startTime, endTime, numMsgs):
         totalTime  = endTime - startTime
@@ -217,12 +279,18 @@ def printThreadTraces():
         
 if __name__ == '__main__':
     tester = RedisPerformanceTester()
+
+#     print('Raw iron')
+#     tester.rawIronPublish(10000, 100, block=True)
+#     sys.exit()
     
     print('------Publish to unsubscribed topic; block == False------')
     tester.publishToUnsubscribedTopic(10000, 100, block=False)
     print('------Publish to unsubscribed topic; block == True------')
     tester.publishToUnsubscribedTopic(10000, 100, block=True)
     print('--------------------')
+    
+    sys.exit()
     
     sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
     sys.stdin.readline()
