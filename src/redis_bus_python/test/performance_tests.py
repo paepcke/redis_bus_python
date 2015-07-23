@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+
 
 '''
 Created on Jul 8, 2015
@@ -278,28 +278,34 @@ def printThreadTraces():
 #**********
         
 if __name__ == '__main__':
+
     tester = RedisPerformanceTester()
 
 #     print('Raw iron')
+#     # Keep run() in PubSub from stealing return values:
+#     tester.bus.topicWaiterThread.pubsub.pauseInTraffic()
 #     tester.rawIronPublish(10000, 100, block=True)
+#     # Re-establish normal operations in PubSub run() loop:
+#     tester.bus.topicWaiterThread.pubsub.continueInTraffic()
+#     
 #     sys.exit()
     
-    print('------Publish to unsubscribed topic; block == False------')
-    tester.publishToUnsubscribedTopic(10000, 100, block=False)
+#     print('------Publish to unsubscribed topic; block == False------')
+#     tester.publishToUnsubscribedTopic(10000, 100, block=False)
     print('------Publish to unsubscribed topic; block == True------')
     tester.publishToUnsubscribedTopic(10000, 100, block=True)
     print('--------------------')
-    
+     
     sys.exit()
     
     sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
     sys.stdin.readline()
 
-    print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
-    tester.publishToSubscribedTopic(10000,100, block=False, sameProcessListener=False)
-    print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
-    tester.publishToSubscribedTopic(10000,100, block=True, sameProcessListener=False)
-    print('--------------------')    
+#     print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
+#     tester.publishToSubscribedTopic(10000,100, block=False, sameProcessListener=False)
+#     print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
+#     tester.publishToSubscribedTopic(10000,100, block=True, sameProcessListener=False)
+#     print('--------------------')    
     
     print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
     tester.syncPublishing(10000,100, block=False)

@@ -458,6 +458,7 @@ class StrictRedis(object):
                     })
             connection_pool = ConnectionPool(**kwargs)
         self.connection_pool = connection_pool
+        self.pubSubObj = None
         self._use_lua_lock = None
 
         self.response_callbacks = self.__class__.RESPONSE_CALLBACKS.copy()
@@ -565,11 +566,21 @@ class StrictRedis(object):
                           thread_local=thread_local)
 
     def pubsub(self, **kwargs):
-        """
+        '''
         Return a Publish/Subscribe object. With this object, you can
         subscribe to channels and listen for messages that get published to
         them.
-        """
+        
+        :param singleton: keyword arg; if True, the same PubSub instance is always returned.
+        :type singleton: bool
+        
+        '''
+        if self.pubSubObj is None:
+            self.pubSubObj = PubSub(self.connection_pool, **kwargs)
+        if kwargs.get('singleton', True):
+            return self.pubSubObj
+
+        # Return a new one:
         return PubSub(self.connection_pool, **kwargs)
 
     # COMMAND EXECUTION AND PROTOCOL PARSING
@@ -582,10 +593,10 @@ class StrictRedis(object):
         then hangs for the Redis server's response.
         If block=False, then this method always returns
         None, and the return value is discarded once
-        it arrives. An example command is:
-                ('PUBLISH', 
-                 'test', 
-                 '{"content": "foo", "id" : "myId", "time" : 1437423922098}')
+        it arrives.
+        
+        NOTE: for publishing messages, the publish() method
+        short-circuits this method.
         
         :param args: sequence whose first element must be a Redis command
         :type args: {[string] | (string)}
@@ -1957,8 +1968,24 @@ class StrictRedis(object):
         :type message: string
         :param block: whether or not to await number of deliveries from server
         :type block: bool
+        :return: number of recipients, if block == True, else None
+        :rtype: {long | None}
         '''
-        return self.execute_command('PUBLISH', channel, message, block=block)
+        # Grab a connection from the pool, giving it an
+        # informative name:
+        connection = self.connection_pool.get_connection('PUBLISH_%s' % channel)
+        try:
+            # Write to connection's socket:
+            connection.send_packed_command(connection.pack_publish_command(channel, message))
+            if block:
+                # Read a number from the socket:
+                #*******num_recipients = connection.read_int()
+                #num_recipients = connection._parser._buffer.readline()
+                num_recipients = connection._parser._buffer._delivery_queue.get(True, 1)
+                return num_recipients
+            return None
+        finally:
+            self.connection_pool.release(connection)        
 
     def eval(self, script, numkeys, *keys_and_args):
         """
@@ -2118,19 +2145,35 @@ class PubSub(threading.Thread):
     
     def __init__(self, connection_pool, shard_hint=None,
                  ignore_subscribe_messages=False):
+        '''
+        Constantly attempt to read the socket coming in from
+        the Redis Server. No value is retrieved up to this
+        thread. The handle_message() instead forwards the 
+        incoming messages. Note that this connection is separate
+        from the ones that carry outgoing (publish()'ed) msgs.
+        
+        :param connection_pool: pool from which to obtain connection instances
+        :type connection_pool: ConnectionPool
+        :param shard_hint: hint for connection choice (needs clarification)
+        :type shard_hint: string
+        :param ignore_subscribe_messages: set True if the acknowledgements from subscribe/unsubscribe
+            message should just be ignored when they arrive.
+        :type ignore_subscribe_messages: bool
+        '''
 
-        threading.Thread.__init__(self, name='PubSubThread')
+        threading.Thread.__init__(self, name='PubSubInMsgs')
         self.setDaemon(True)
         
         self.connection_pool = connection_pool
         self.shard_hint = shard_hint
         self.ignore_subscribe_messages = ignore_subscribe_messages
         self.done = False
+        self.paused = False
         self.connection = None
        
         # we need to know the encoding options for this connection in order
         # to lookup channel and pattern names for callback handlers.
-        conn = connection_pool.get_connection('pubsub', shard_hint)
+        conn = connection_pool.get_connection('InMsgs', shard_hint)
         try:
             self.encoding = conn.encoding
             self.encoding_errors = conn.encoding_errors
@@ -2145,6 +2188,15 @@ class PubSub(threading.Thread):
 
         # Start listening on that connection:        
         self.start()
+
+    def pauseInTraffic(self):
+        self.paused = True
+        # Get the run() loop out of its
+        # hanging call to handle_message():
+        self.execute_command('PING')
+
+    def continueInTraffic(self):
+        self.paused = True
 
     def stop(self):
         if self.done:
@@ -2164,6 +2216,12 @@ class PubSub(threading.Thread):
         
         try:
             while not self.done:
+                if self.paused:
+                    # For testing we sometimes pause reading from
+                    # the socket so that other threads can read
+                    # it instead:
+                    time.sleep(1)
+                    continue
                 # We don't do anything with the response,
                 # because this implementation only supports
                 # handler-based operation: the call to
@@ -2252,7 +2310,7 @@ class PubSub(threading.Thread):
 
         if self.connection is None:
             self.connection = self.connection_pool.get_connection(
-                'pubsub',
+                'PubSubInMsgs',
                 self.shard_hint
             )
             # register a callback that re-subscribes to any channels we
@@ -2522,6 +2580,7 @@ class PubSub(threading.Thread):
 
             
         if message_type in self.PUBLISH_MESSAGE_TYPES:
+            # Incoming message;
             # if there's a message handler, invoke it
             handler = None
             if message_type == 'pmessage':

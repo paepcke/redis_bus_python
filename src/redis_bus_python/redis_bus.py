@@ -123,7 +123,7 @@ class BusAdapter(object):
             try:
 
                 # Finally: post the request...; 
-                self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
+                numRecipients = self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
                 
                 # And wait for the result:
                 try:
@@ -142,7 +142,8 @@ class BusAdapter(object):
             
         else:
             # Not a synchronous call; just publish the request:
-            self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
+            numRecipients = self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
+            return numRecipients
           
     def subscribeToTopic(self, topicName, deliveryCallback=None, context=None):
         '''

@@ -80,9 +80,21 @@ class SocketLineReader(threading.Thread):
     
     DO_BLOCK = True
     
-    def __init__(self, socket, dest_buffer, socket_read_size=4096):
+    def __init__(self, socket, socket_read_size=4096, name=None):
+        '''
+        Thread responsible for receiving data from the Redis server
+        on one socket. The dest_buffer is an object that satisfies
+        the same interface as a Queue.Queue.
+        
+        :param socket: the socket object for which this thread is responsible.
+        :type socket: socket
+        :param socket_read_size: socket buffer size
+        :type socket_read_size: int
+        :param name: optional name for this thread; use to make debugging easier
+        :type name: string
+        '''
 
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name='SocketReader' if name is None else 'SocketReader' + name)
         self.setDaemon(True)
 
         self._sock = socket
@@ -181,6 +193,11 @@ class SocketLineReader(threading.Thread):
                     return
                 try:
                     data = self._sock.recv(socket_read_size)
+                    #**********
+                    self._delivery_queue.put_nowait(data)
+                    continue
+                    #**********
+                    
                     if self._done:
                         return
                     if remnant is not None:
@@ -250,7 +267,7 @@ class PythonParser(BaseParser):
     def on_connect(self, connection):
         "Called when the socket connects"
         self._sock = connection._sock
-        self._buffer = SocketLineReader(self._sock, self.socket_read_size)
+        self._buffer = SocketLineReader(self._sock, self.socket_read_size, name=connection.name)
         if connection.decode_responses:
             self.encoding = connection.encoding
 
@@ -269,6 +286,26 @@ class PythonParser(BaseParser):
 
     def can_read(self):
         return self._buffer and not self._buffer.empty()
+    
+    def read_int(self):
+        '''
+        Use if an integer or long is expected in response to a
+        command. Provides efficiency for when higher layers know
+        what to expect back on this connection.
+        
+        :return: the expected integer or long
+        :rtype: long
+        :raise InvalidResponse if a non-integer is received from the Redis server. 
+        '''
+        response = self._buffer.readline().strip()
+        if not response:
+            raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
+        if not response.startswith(':'):
+            raise InvalidResponse("Expecting integer response but received '%s'" % response)
+        try:
+            return long(response[1:])
+        except ValueError:
+            raise InvalidResponse("Expecting integer response but received '%s'" % response)
 
     def read_response(self):
         '''
@@ -365,18 +402,19 @@ DefaultParser = PythonParser
 class Connection(object):
     "Manages TCP communication to and from a Redis server"
     
-    description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s>"
+    description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s,name=%(_name)s>"
 
     def __init__(self, host='localhost', port=6379, db=0, password=None,
                  socket_timeout=None, socket_connect_timeout=None,
                  socket_keepalive=False, socket_keepalive_options=None,
                  retry_on_timeout=False, encoding='utf-8',
                  encoding_errors='strict', decode_responses=False,
-                 parser_class=DefaultParser, socket_read_size=4096):
+                 parser_class=DefaultParser, socket_read_size=4096, name=None):
         self.pid = os.getpid()
         self.host = host
         self.port = int(port)
         self.db = db
+        self._name = name
         self.password = password
         self.socket_timeout = socket_timeout
         self.socket_connect_timeout = socket_connect_timeout or socket_timeout
@@ -405,6 +443,14 @@ class Connection(object):
             self.disconnect()
         except Exception:
             pass
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, new_name):
+        self._name = new_name
 
     @property
     def subscribeAckEvent(self):
@@ -572,6 +618,20 @@ class Connection(object):
         return self._parser.can_read() or \
             bool(select([sock], [], [], timeout)[0])
 
+    def read_int(self):
+        '''
+        Read an (expected) integer/long result from a previously sent command.
+        
+        :return: the expected integer/long response
+        :rtype: long
+        :raise InvalidResponse: if a non-integer is received from the Redis server.
+        '''
+        try:
+            return self._parser.read_int()
+        except:
+            self.disconnect()
+            raise
+
     def read_response(self):
         "Read the response from a previously sent command"
         try:
@@ -600,7 +660,16 @@ class Connection(object):
         return value
 
     def pack_command(self, *args):
-        "Pack a series of arguments into the Redis protocol"
+        '''
+        Pack a series of arguments into the Redis protocol.
+        For an optimized special case for PUBLISH messages,
+        see pack_publish_command.
+        
+        :return: array of all arguments packed into the Redis
+            wire protocol.
+        :rtype: [string]
+        '''
+        
         output = []
         # the client might have included 1 or more literal arguments in
         # the command name, e.g., 'CONFIG GET'. The Redis server expects these
@@ -630,6 +699,29 @@ class Connection(object):
                                        SYM_CRLF, arg, SYM_CRLF))
         output.append(buff)
         return output
+
+    def pack_publish_command(self, channel, msg):
+        '''
+        Given a message and a channel, return a string that
+        is the corresponding wire message. This is an optimized
+        special case for PUBLISH messages. 
+        
+        :param channel: the channel to which to publish
+        :type channel: string
+        :param msg: the message to publish
+        :type msg: string
+        '''
+        wire_msg = '\r\n'.join(['*3',                # 3 parts to follow
+                                '$7',                # 7 letters
+                                'PUBLISH',           # <command>
+                                '$%d' % len(channel),# num topic-letters to follow 
+                                channel,             # <topic>
+                                '$%d' % len(msg),    # num msg-letters to follow
+                                msg,                 # <msg>
+                                ''                   # forces a closing \r\n
+                                ])
+        return wire_msg
+
 
     def pack_commands(self, commands):
         "Pack multiple commands into the Redis protocol"
@@ -898,6 +990,8 @@ class ConnectionPool(object):
         socket. If that value isn't available yet, we pick a different
         connection. 
         
+        :param command_name: name for this connection; useful during debugging
+        :type command_name: string
         '''
         
         self._checkpid()
@@ -937,7 +1031,8 @@ class ConnectionPool(object):
                         # Return value not received yet: get a 
                         # different connection instance from the pool,
                         connectionsOrphanWaiting.append(connection)
-                        
+                else:
+                    found_conn = True
         except IndexError:
             # No available connection in the pool
             # (Or all are waiting for Redis server returns,
@@ -948,6 +1043,7 @@ class ConnectionPool(object):
             self._available_connections.extend(connectionsOrphanWaiting)
 
         self._in_use_connections.add(connection)
+        connection.name = command_name
         return connection
 
 
