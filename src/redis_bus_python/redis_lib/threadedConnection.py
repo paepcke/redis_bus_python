@@ -1,6 +1,5 @@
 from __future__ import with_statement
 
-import Queue
 import errno
 from itertools import chain
 import os
@@ -11,6 +10,7 @@ import threading
 import time
 import warnings
 
+from redis_bus_python.redis_lib import fastqueue
 from redis_bus_python.redis_lib._compat import b, xrange, imap, byte_to_chr, \
     unicode, bytes, long, nativestr, basestring, iteritems, LifoQueue, Empty, Full, \
     urlparse, parse_qs, unquote
@@ -107,7 +107,8 @@ class SocketLineReader(threading.Thread):
         self._sock.settimeout(SocketLineReader.SOCKET_READ_TIMEOUT)
         
         self._socket_read_size = socket_read_size
-        self._delivery_queue = Queue.Queue()
+        #******self._delivery_queue = Queue.Queue()
+        self._delivery_queue = fastqueue.FastQueue()
         
         self._done = False
         self.start()
@@ -123,7 +124,8 @@ class SocketLineReader(threading.Thread):
                 # pausing occasionally to check whether the thread
                 # has been stopped:
                 return self._delivery_queue.get(SocketLineReader.DO_BLOCK, SocketLineReader.SOCKET_READ_TIMEOUT)
-            except Queue.Empty:
+            #****except Queue.Empty:
+            except fastqueue.Empty:
                 continue
         
     def read(self, length):
@@ -742,6 +744,42 @@ class Connection(object):
         if pieces:
             output.append(SYM_EMPTY.join(pieces))
         return output
+
+class OneShotConnection(object):
+    
+    def __init__(self):
+        
+        self._sock = None
+#***** set timeout on sock        
+        self.returnedResult = None
+        self.resultLock = threading.Lock()
+        
+    def get_int(self, block=True, timeout=None):
+        '''
+        read a Redis int from the socket. Ensure
+        that it is an int, i.e. of the form ":[0-9]*\r\n.
+        After locking self.returnedResult, set self.returnedResult
+        to the integer, unlock, and return.
+        
+        :param block: whether to block, or return immediately if
+            no data is available on the socket.
+        :type block: bool
+        :param timeout: if block==True, how long to block. None or 0: wait forever.
+        :type timeout: float
+        '''
+        
+        if block:
+            rawRes = self._sock.recv(1024)
+        else:
+            (rlist, wlist, xlist) = select.select([self._sock], [], [], timeout) #@UnusedVariable
+            if len(rlist) == 0: 
+                return None
+        intRes = int(rawRes[1:].strip())
+        return
+        
+    
+
+
 
 
 class SSLConnection(Connection):

@@ -9,8 +9,27 @@ TODO:
 
 '''
 
+import array
 import threading
 
+
+# Faking an enum type:
+def enum(**enums):
+    return type('Enum', (), enums)
+
+Types = enum(char = 'c',
+             signedChar = 'b',
+             uChar = 'B',
+             unicode = 'u',
+             signedShort = 'h',
+             uShort = 'H',
+             signedInt = 'i',
+             uInt = 'I',
+             signedLong = 'l',
+             uLong = 'L',
+             float = 'f',
+             double = 'd'
+             )
 
 class Full(Exception):
     pass
@@ -30,9 +49,10 @@ class FastQueue(object):
         '''
         
         self.MAX_SIZE = max_size
-        self.queueArr          = []
+        self.queueArr          = array.array(Types.char)
         self.nextPos           = 0
         self.beyondLastPos     = 0
+        self.numItems          = 0
         
         # Length of queue that triggers garbage collection:
         self.compactingThreshold = 2**13 # 8k
@@ -54,7 +74,8 @@ class FastQueue(object):
         self.queueLock.acquire()
         try:
             val = self.getItem()
-            return val
+            self.numItems -= 1
+            return val.tostring()
         finally:
             self.queueLock.release()
 
@@ -62,10 +83,11 @@ class FastQueue(object):
         return self.get(blocking=False)
     
     def put(self, item):
-        self.queueLock.acquire()
         
+        self.queueLock.acquire()
         try:
             self.putItem(item)
+            self.numItems += 1
         finally:
             self.queueLock.release()
             self.putCondition.acquire()
@@ -79,10 +101,10 @@ class FastQueue(object):
         return self.beyondLastPos == self.nextPos
     
     def full(self):
-        return self.MAX_SIZE > 0 and self.beyondLastPos - self.nextPos >= self.MAX_SIZE
+        return self.MAX_SIZE > 0 and self.numItems >= self.MAX_SIZE
 
     def size(self):
-        return self.beyondLastPos - self.nextPos
+        return self.numItems
 
 # ------------------------------ Private Methods -------------------
         
@@ -90,8 +112,9 @@ class FastQueue(object):
     def getItem(self):
         if self.empty():
             raise Empty('No items in queue')
-        retVal = self.queueArr[self.nextPos]
-        self.nextPos += 1
+        (terminatorStart, postTerminator) = self.terminatorPos()
+        retVal = self.queueArr[self.nextPos:terminatorStart]
+        self.nextPos = postTerminator
         if self.nextPos == self.beyondLastPos:
             # Queue empty; take opportunity to 
             # reset to the beginning:
@@ -102,17 +125,38 @@ class FastQueue(object):
     def putItem(self, item):
 
         # Does queue have a max size, which we exceeded?        
-        if self.MAX_SIZE > 0 and self.beyondLastPos - self.nextPos >= self.MAX_SIZE:
+        if self.MAX_SIZE > 0 and self.numItems >= self.MAX_SIZE:
             # Reached capacity:
             raise Full('Queue reached max capacity of %d' % self.MAX_SIZE)
         
-        self.queueArr.append(item)
-        self.beyondLastPos += 1
+        #****self.queueArr.append(item)
+        self.queueArr.fromstring(item)
+        self.beyondLastPos += self.queueArr.itemsize * len(item)
         
         # Time to gc, and do we have room at start of queue,
         # and reached the threshold?
         if self.beyondLastPos >= self.compactingThreshold and self.nextPos > 0:
             self.garbageCollect()
+      
+    def terminatorPos(self, terminator='\r\n'):
+        '''
+        Throws value error if terminator not found.
+        
+        :param terminator:
+        :type terminator:
+        '''
+        try:
+            indx = self.nextPos + self.queueArr[self.nextPos:].index(terminator[0])
+            for pt in range(len(terminator)):
+                if self.queueArr[indx+pt] != terminator[pt]:
+                    raise ValueError('Terminator not found in array')
+            return (indx, indx+len(terminator))
+        except (ValueError, IndexError):
+            raise ValueError('Terminator not found in array')
+                 
+            
+            
+        
             
     def garbageCollect(self):
         '''
@@ -122,7 +166,7 @@ class FastQueue(object):
         
         
         '''
-        if self.nextPos == 0:
+        if self.full():
             # Reached capacity:
             raise Full('Queue reached capacity of %d' % self.MAX_SIZE)
         tmpArr = self.queueArr[self.nextPos:self.beyondLastPos]
