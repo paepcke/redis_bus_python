@@ -1,6 +1,5 @@
 from __future__ import with_statement
 
-import Queue
 import errno
 from itertools import chain
 import os
@@ -11,6 +10,7 @@ import threading
 import time
 import warnings
 
+from redis_bus_python.redis_lib import fastqueue
 from redis_bus_python.redis_lib._compat import b, xrange, imap, byte_to_chr, \
     unicode, bytes, long, nativestr, basestring, iteritems, LifoQueue, Empty, Full, \
     urlparse, parse_qs, unquote
@@ -107,7 +107,7 @@ class SocketLineReader(threading.Thread):
         self._sock.settimeout(SocketLineReader.SOCKET_READ_TIMEOUT)
         
         self._socket_read_size = socket_read_size
-        self._delivery_queue = Queue.Queue()
+        self._delivery_queue = fastqueue.FastQueue()
         
         self._done = False
         self.start()
@@ -122,8 +122,14 @@ class SocketLineReader(threading.Thread):
                 # Read one whole line, without the closing SYM_CRLF,
                 # pausing occasionally to check whether the thread
                 # has been stopped:
-                return self._delivery_queue.get(SocketLineReader.DO_BLOCK, SocketLineReader.SOCKET_READ_TIMEOUT)
-            except Queue.Empty:
+                #***********
+                #*******return self._delivery_queue.get(SocketLineReader.DO_BLOCK, SocketLineReader.SOCKET_READ_TIMEOUT)
+                return self._delivery_queue.get(False)
+                #***********
+            except fastqueue.Empty:
+                #***********
+                time.sleep(0.01)
+                #***********
                 continue
         
     def read(self, length):
@@ -193,10 +199,6 @@ class SocketLineReader(threading.Thread):
                     return
                 try:
                     data = self._sock.recv(socket_read_size)
-                    #**********
-                    self._delivery_queue.put_nowait(data)
-                    continue
-                    #**********
                     
                     if self._done:
                         return
@@ -1072,6 +1074,8 @@ class ConnectionPool(object):
 
 class BlockingConnectionPool(ConnectionPool):
     """
+    NOTE: This class is not maintained and likely obsolete.
+    
     Thread-safe blocking connection pool::
 
         >>> from redis.client import Redis

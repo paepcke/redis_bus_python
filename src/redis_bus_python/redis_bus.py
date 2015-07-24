@@ -56,7 +56,9 @@ class BusAdapter(object):
         self.topicThreads = {}
         self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db, threadName='TopicWaiterThread')
         
-        self.topicWaiterThread.start()
+        #***********
+        #self.topicWaiterThread.start()
+        #***********        
         
     def publish(self, busMessage, sync=False, timeout=None, block=True, auth=None):
         '''
