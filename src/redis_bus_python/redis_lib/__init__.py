@@ -1,5 +1,5 @@
 from redis_bus_python.redis_lib.client import Redis, StrictRedis
-from threadedConnection import (
+from connection import (
     BlockingConnectionPool,
     ConnectionPool,
     Connection,

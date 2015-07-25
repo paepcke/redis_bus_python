@@ -1,8 +1,9 @@
 from __future__ import with_statement
 
-import errno
 from itertools import chain
 import os
+from parser import Token
+import re
 from select import select
 import socket
 import sys
@@ -10,15 +11,17 @@ import threading
 import time
 import warnings
 
-from redis_bus_python.redis_lib import fastqueue
-from redis_bus_python.redis_lib._compat import b, xrange, imap, byte_to_chr, \
-    unicode, bytes, long, nativestr, basestring, iteritems, LifoQueue, Empty, Full, \
-    urlparse, parse_qs, unquote
+from redis_bus_python.redis_lib._compat import b, imap, unicode, bytes, long, \
+    nativestr, basestring, iteritems, LifoQueue, Empty, Full, urlparse, parse_qs, \
+    unquote
 from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
     TimeoutError, BusyLoadingError, ResponseError, InvalidResponse, \
-    AuthenticationError, NoScriptError, ExecAbortError, ReadOnlyError
+    AuthenticationError, NoScriptError, ExecAbortError, ReadOnlyError #@UnusedImport
+from redis_bus_python.redis_lib.parser import PythonParser, SYM_EMPTY, SYM_STAR, \
+    SYM_CRLF, SYM_DOLLAR
 
 
+#@UnusedImport
 try:
     import ssl
     ssl_available = True
@@ -26,388 +29,26 @@ except ImportError:
     ssl_available = False
 
 
-SYM_STAR = '*'
-SYM_DOLLAR = '$'
-SYM_CRLF = '\r\n'
-SYM_EMPTY = ''
 
 SERVER_CLOSED_CONNECTION_ERROR = "Connection closed by server."
 
-
-class Token(object):
-    """
-    Literal strings in Redis commands, such as the command names and any
-    hard-coded arguments are wrapped in this class so we know not to apply
-    and encoding rules on them.
-    """
-    def __init__(self, value):
-        if isinstance(value, Token):
-            value = value.value
-        self.value = value
-
-    def __repr__(self):
-        return self.value
-
-    def __str__(self):
-        return self.value
-
-
-class BaseParser(object):
-    EXCEPTION_CLASSES = {
-        'ERR': ResponseError,
-        'EXECABORT': ExecAbortError,
-        'LOADING': BusyLoadingError,
-        'NOSCRIPT': NoScriptError,
-        'READONLY': ReadOnlyError,
-    }
-
-    def parse_error(self, response):
-        "Parse an error response"
-        error_code = response.split(' ')[0]
-        if error_code in self.EXCEPTION_CLASSES:
-            response = response[len(error_code) + 1:]
-            return self.EXCEPTION_CLASSES[error_code](response)
-        return ResponseError(response)
-
-
-class SocketLineReader(threading.Thread):
-    
-    # Seconds for socket.recv to time out when
-    # nothing is arriving, so that we can check
-    # whether we are to stop the thread, or purge
-    # the delivery buffer:
-    SOCKET_READ_TIMEOUT = 0.5
-    
-    DO_BLOCK = True
-    
-    def __init__(self, socket, socket_read_size=4096, name=None):
-        '''
-        Thread responsible for receiving data from the Redis server
-        on one socket. The dest_buffer is an object that satisfies
-        the same interface as a Queue.Queue.
-        
-        :param socket: the socket object for which this thread is responsible.
-        :type socket: socket
-        :param socket_read_size: socket buffer size
-        :type socket_read_size: int
-        :param name: optional name for this thread; use to make debugging easier
-        :type name: string
-        '''
-
-        threading.Thread.__init__(self, name='SocketReader' if name is None else 'SocketReader' + name)
-        self.setDaemon(True)
-
-        self._sock = socket
-        
-        self._sock.setblocking(True)
-        
-        # Make the socket non-blocking, so that
-        # we can periodically check whether this
-        # thread is to stop:
-        self._sock.settimeout(SocketLineReader.SOCKET_READ_TIMEOUT)
-        
-        self._socket_read_size = socket_read_size
-        self._delivery_queue = fastqueue.FastQueue()
-        
-        self._done = False
-        self.start()
-        
-    def empty(self):
-        return self._delivery_queue.empty()
-        
-    def readline(self):
-        
-        while not self._done:
-            try:
-                # Read one whole line, without the closing SYM_CRLF,
-                # pausing occasionally to check whether the thread
-                # has been stopped:
-                #***********
-                #*******return self._delivery_queue.get(SocketLineReader.DO_BLOCK, SocketLineReader.SOCKET_READ_TIMEOUT)
-                return self._delivery_queue.get(False)
-                #***********
-            except fastqueue.Empty:
-                #***********
-                time.sleep(0.01)
-                #***********
-                continue
-        
-    def read(self, length):
-        '''
-        Read the specified number of bytes from the
-        socket. We know from the Redis protocol that
-        even binary payloads will be terminated by
-        SYM_CRLF. So we read in chunks of lines, adding
-        the SYM_CRLF strings that may be part of the
-        binary payload back in as we go. Blocks until
-        enough bytes have been read from the socket.
-        Pauses occasionally to check whether thread
-        has been stopped.
-        
-        Note: the sequence of requested bytes must be
-        followed by a SYM_CRLF coming in from the socket. 
-        
-        :param length: number of bytes to read
-        :type length: int
-        :return: string of requested length
-        :rtype: string
-        :raise IndexError: when requested chunk of bytes does not end in SYM_CRLF.
-        '''
-
-        if length == 0:
-            return ''        
-        msg = []
-        bytes_read = 0
-        
-        while not self._done:
-            # Get one line from socket, blocking if necessary:
-            msgFragment = self.readline()
-            if self._done:
-                return
-    
-            # If there was at least one prior
-            # fragment, add the SYM_CRLF to
-            # its end, b/c that was stripped by
-            # readline():
-            if len(msg) > 0:
-                msg.append(SYM_CRLF)
-                bytes_read += 2
-            msg.append(msgFragment)
-            bytes_read += len(msgFragment)
-            if bytes_read < length:
-                continue
-            if bytes_read == length:
-                return ''.join(msg)
-        
-            # Requested chunk was not followed by SYM_CRLF:    
-            raise IndexError('Attempt to read byte sequence of length %d from socket that does not end with \r\n' % length)
-        
-        
-    def stop(self):
-        self._done = True
-
-    def close(self):
-        self.stop()
-
-    def run(self):
-        socket_read_size = self._socket_read_size
-        remnant = None
-
-        try:
-            while True:
-                if self._done:
-                    return
-                try:
-                    data = self._sock.recv(socket_read_size)
-                    
-                    if self._done:
-                        return
-                    if remnant is not None:
-                        data = remnant + data
-                        remnant = None
-                except socket.timeout:
-                    # Just check for whether to stop, and
-                    # go right into recv again:
-                    continue
-                except socket.error as e:
-                    if e.args[0] == errno.EAGAIN:
-                        time.sleep(0.3)
-                        continue
-                    else:
-                        raise
-                    
-                # An empty string indicates the server shutdown the socket
-                if isinstance(data, bytes) and len(data) == 0:
-                    raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
-                if SYM_CRLF in data:
-                    
-                    lines = data.split(SYM_CRLF)
-                                        
-                    # str.split() adds an empty str if the
-                    # str ends in the split symbol. If str does
-                    # not end in the split symbol, the resulting
-                    # array has the unfinished fragment at the end.
-                    # Don't push the final element to the out queue
-                    # either way:
-                    
-                    for line in lines[:-1]:
-                        self._delivery_queue.put_nowait(line)
-                        
-                    # Final bytes may or may not have their
-                    # closing SYM_CRLF yet:
-                    if not data.endswith(SYM_CRLF):
-                        # Have a partial line at the end:
-                        remnant = lines[-1]
-                    
-        except socket.error:
-            # Will occur legitimately when socket gets closed
-            # via a call to the associated Connection instance's
-            # disconnect() method: that method does call this
-            # thread's stop() method, but the socket may still
-            # be hanging in the recv() above:
-            if self._done:
-                return
-            e = sys.exc_info()[1]
-            raise ConnectionError("Error while reading from socket: %s" %
-                                  (e.args,))
-
-class PythonParser(BaseParser):
-    "Plain Python parsing class"
-    encoding = None
-
-    def __init__(self, socket_read_size):
-        self.socket_read_size = socket_read_size
-        self._sock = None
-        self._buffer = None
-                
-    def __del__(self):
-        try:
-            self.on_disconnect()
-        except Exception:
-            pass
-
-    def on_connect(self, connection):
-        "Called when the socket connects"
-        self._sock = connection._sock
-        self._buffer = SocketLineReader(self._sock, self.socket_read_size, name=connection.name)
-        if connection.decode_responses:
-            self.encoding = connection.encoding
-
-    def on_disconnect(self):
-        "Called when the socket disconnects"
-
-        if self._buffer is not None:
-            self._buffer.close()
-            self._buffer = None
-
-        if self._sock is not None:
-            self._sock.close()
-            self._sock = None
-        self.encoding = None
-
-
-    def can_read(self):
-        return self._buffer and not self._buffer.empty()
-    
-    def read_int(self):
-        '''
-        Use if an integer or long is expected in response to a
-        command. Provides efficiency for when higher layers know
-        what to expect back on this connection.
-        
-        :return: the expected integer or long
-        :rtype: long
-        :raise InvalidResponse if a non-integer is received from the Redis server. 
-        '''
-        response = self._buffer.readline().strip()
-        if not response:
-            raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
-        if not response.startswith(':'):
-            raise InvalidResponse("Expecting integer response but received '%s'" % response)
-        try:
-            return long(response[1:])
-        except ValueError:
-            raise InvalidResponse("Expecting integer response but received '%s'" % response)
-
-    def read_response(self):
-        '''
-        Reads one line from the wire, and interprets it.
-        Example: the acknowledgment to an unsubscribe
-        from topic myTopic on the wire looks like this:
-        
-             *3\r\n$11\r\nUNSUBSCRIBE\r\n$7\r\nmyTopic\r\n:1\r\n'
-             
-        *3    # three items to follow
-        $11   # string of 11 chars
-        UNSUBSCRIBE
-        $7    # string of 7 chars
-        myTopic
-        :1    # one topic subscribed to now
-        
-        Each line will cause a recursive call to this method
-        (see elif byte == '*' below).
-        
-        Simpler calls will be individual elements, such
-        as ':12', which returns the integer 12.
-        
-        These are the possible prefixes; each item
-        is followed by a \r\n, which is stripped
-        by SocketLineReader:
-        
-            +<str>    simple string
-            :<int>    integer
-            $<n>    string of length <n>
-            *<num>    start of array with <num> elements
-
-        When the message to parse is the acknowledgment of
-        a SUBSCRIBE or UNSUBSCRIBE command, this method
-        will set() event self.unsubscribeAckEvent/self.unsubscribeAckEvent.
-
-        :return: response string
-        :rtype: string
-        '''
-        response = self._buffer.readline()
-        if not response:
-            raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
-
-        byte, response = byte_to_chr(response[0]), response[1:]
-
-        if byte not in ('-', '+', ':', '$', '*'):
-            raise InvalidResponse("Protocol Error: %s, %s" %
-                                  (str(byte), str(response)))
-
-        # server returned an error
-        if byte == '-':
-            response = nativestr(response)
-            error = self.parse_error(response)
-            # if the error is a ConnectionError, raise immediately so the user
-            # is notified
-            if isinstance(error, ConnectionError):
-                raise error
-            # otherwise, we're dealing with a ResponseError that might belong
-            # inside a pipeline response. the connection's read_response()
-            # and/or the pipeline's execute() will raise this error if
-            # necessary, so just return the exception instance here.
-            return error
-        # simple-string: response holds result:
-        elif byte == '+':
-            pass
-        # int value
-        elif byte == ':':
-            response = long(response)
-            
-        # bulk response
-        elif byte == '$':
-            length = int(response)
-            if length == -1:
-                # Null string:
-                return None
-            response = self._buffer.read(length)
-                        
-        # multi-bulk response
-        elif byte == '*':
-            length = int(response)
-            if length == -1:
-                return None
-            response = [self.read_response() for _ in xrange(length)]
-        if isinstance(response, bytes) and self.encoding:
-            response = response.decode(self.encoding)
-        #***********
-        #print('Response: %s' % byte + '|' + str(response))
-        #***********
-                
-        return response
-
 DefaultParser = PythonParser
-
 
 class Connection(object):
     "Manages TCP communication to and from a Redis server"
     
     description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s,name=%(_name)s>"
 
+    # Redis protocol start of a string:
+    # 2 elements to follow (*2\r\n);
+    # length indicator '$':
+    WIRE_PROTOCOL_STR_START = '*2\r\n$'
+    
+    # Integer string search pattern:
+    INT_PATTERN = re.compile("[0-9]*")
+    
     def __init__(self, host='localhost', port=6379, db=0, password=None,
-                 socket_timeout=None, socket_connect_timeout=None,
+                 socket_timeout=2.0, socket_connect_timeout=1.0,
                  socket_keepalive=False, socket_keepalive_options=None,
                  retry_on_timeout=False, encoding='utf-8',
                  encoding_errors='strict', decode_responses=False,
@@ -557,7 +198,10 @@ class Connection(object):
     def on_connect(self):
         "Initialize the connection, authenticate and select a database"
         self._parser.on_connect(self)
+        self._on_connect()
 
+    def _on_connect(self):
+        
         # if a password is specified, authenticate
         if self.password:
             self.send_command('AUTH', self.password)
@@ -573,6 +217,9 @@ class Connection(object):
     def disconnect(self):
         "Disconnects from the Redis server"
         self._parser.on_disconnect()
+        self._disconnect()
+        
+    def _disconnect(self):
         if self._sock is None:
             return
         try:
@@ -745,6 +392,126 @@ class Connection(object):
             output.append(SYM_EMPTY.join(pieces))
         return output
 
+
+class OneShotConnection(Connection):
+    '''
+    Connection that is not backed by a buffer, and
+    is not a thread. Used exclusively for messages
+    to the Redis server that expect a single return
+    data item.
+    
+    Methods get_int() and get_string() know about the
+    Redis wire protocol, and extract the payload. No
+    external parser is used. No callbacks are made to
+    anywhere. 
+    
+    '''
+    
+    def __init__(self, host='localhost', port=6379, **kwargs):
+        super(OneShotConnection, self).__init__(host, port, kwargs)
+        
+        self.returnedResult = None
+        self.connect()
+        
+    def read_int(self, block=True, timeout=None):
+        '''
+        Reads a Redis int from the socket. Ensures
+        that it is an int, i.e. of the form ":[0-9]*\r\n.
+        
+        :param block: whether to block, or return immediately if
+            no data is available on the socket.
+        :type block: bool
+        :param timeout: if block==True, how long to block. None or 0: wait forever.
+        :type timeout: float
+        :return: integer that was returned by the Redis server
+        :rtype: int
+        :raise ResponseError if returned value is not an integer
+        :raises TimeoutError: if no data arrives from server in time. 
+        '''
+        
+        rawRes = self._read_socket(block=block, timeout=timeout)
+        try:
+            intRes = int(rawRes[1:].strip())
+        except (ValueError, IndexError):
+            raise ResponseError("Server did not return an int; returned '%s'" % intRes)
+        return intRes
+    
+    def read_string(self, block=True, timeout=None):
+        '''
+        Returns a Redis wire protocol encoded string from the 
+        socket. Expect incoming data to be a Redis 'simple string',
+        or a lenth-specified string: 
+        
+        Simple string form: +<str>
+        Length specified string form: "*2\r\n$<strLen>\r\n<str>
+        
+        :param block: block for data to arrive from server, or not.
+        :type block: bool
+        :param timeout: if block == True, when to time out
+        :type timeout: float
+        :return: the string returned by the server
+        :rtype: string
+        :raise ResponseError: if response arrives, but is not in proper string format
+        :raises TimeoutError: if no data arrives from server in time. 
+        '''
+
+        rawRes = self._read_socket(block=block, timeout=timeout, buf_size=2048)
+
+        # Is it a 'simple string', i.e. "+<str>"?
+        if rawRes[0] == '+':
+            return(rawRes[1:-len(SYM_CRLF)])
+        
+        # Raw result must start with: 2 elements to follow (*2\r\n);
+        # length indicator '$':
+        if not rawRes.startswith(Connection.WIRE_PROTOCOL_STR_START):
+            raise ResponseError("Server did not return a string (string preamble missing); returned '%s'" % rawRes)
+        
+        match = Connection.INT_PATTERN.search(rawRes[len(Connection.WIRE_PROTOCOL_STR_START):])
+        if match is None:
+            raise ResponseError("Server did not return a string (string length missing); returned '%s'" % rawRes)
+
+        intEnd = match.end()
+        # Len of string is the given length minus the terminator:
+        strLen = rawRes[match.start(), intEnd] - len(SYM_CRLF)
+        # String starts after the \r\n that terminates
+        # the string length:
+        strStart = intEnd + 2
+        res = rawRes[strStart:strStart+strLen]
+        return res
+
+    def _read_socket(self, block=True, timeout=None, buf_size=1024):
+        '''
+        Read from the socket, and return the result
+        
+        :param block: if True, block till arrival of the data
+        :type block: bool 
+        :param timeout: if blocking, timeout
+        :type timeout: float
+        :param buf_size: size of buffer for socket to use.
+        :type buf_size: int
+        :return: string that arrived on socket
+        :rtype: string
+        :raises TimeoutError: if no data arrives from server in time.
+        '''
+
+        if block:
+            # Hang till something arrives from Redis server:
+            try:
+                rawRes = self._sock.recv(buf_size)
+            except socket.timeout:
+                raise TimeoutError('Server did not return result within %2.2f sec' % self._sock.gettimeout())
+        else:
+            # Anything available on the socket?
+            (rlist, wlist, xlist) = select.select([self._sock], [], [], timeout) #@UnusedVariable
+            if len(rlist) == 0: 
+                return None
+            else:
+                try:
+                    rawRes = self._sock.recv(buf_size)
+                except socket.timeout:
+                    raise TimeoutError("Redis server did not produce a response within %2.2f seconds" % timeout)                    
+
+        return rawRes
 
 class SSLConnection(Connection):
     description_format = "SSLConnection<host=%(host)s,port=%(port)s,db=%(db)s>"

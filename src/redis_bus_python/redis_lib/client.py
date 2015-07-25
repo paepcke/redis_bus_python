@@ -16,7 +16,7 @@ import time as mod_time
 from redis_bus_python.redis_lib._compat import (b, basestring, bytes, imap, iteritems, iterkeys,
                            itervalues, izip, long, nativestr, unicode,
                            safe_unicode)
-from redis_bus_python.redis_lib.threadedConnection import (ConnectionPool, UnixDomainSocketConnection,
+from redis_bus_python.redis_lib.connection import (ConnectionPool, UnixDomainSocketConnection,
                               SSLConnection, Token)
 from redis_bus_python.redis_lib.lock import Lock, LuaLock
 from redis_bus_python.redis_lib.exceptions import (
