@@ -35,32 +35,81 @@ SERVER_CLOSED_CONNECTION_ERROR = "Connection closed by server."
 DefaultParser = PythonParser
 
 class Connection(object):
-    "Manages TCP communication to and from a Redis server"
+    '''
+    Abstract class to handle connections to the Redis server.
+    Subclasses, like ParsedConnection or OneShotConnection
+    should be used by applications.
+    '''
     
     description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s,name=%(_name)s>"
+
+    # Socket timeout when awaiting a response
+    # from the Redis server:
+    REDIS_RESPONSE_TIMEOUT = 0.3 # sec
 
     # Redis protocol start of a string:
     # 2 elements to follow (*2\r\n);
     # length indicator '$':
-    WIRE_PROTOCOL_STR_START = '*2\r\n$'
+    WIRE_PROTOCOL_STR_START_PATTERN = re.compile(r'[*][0-9]*\r\n[$]')
     
     # Integer string search pattern:
     INT_PATTERN = re.compile("[0-9]*")
     
     def __init__(self, host='localhost', port=6379, db=0, password=None,
-                 socket_timeout=2.0, socket_connect_timeout=1.0,
+                 socket_timeout=None, socket_connect_timeout=1.0,
                  socket_keepalive=False, socket_keepalive_options=None,
                  retry_on_timeout=False, encoding='utf-8',
                  encoding_errors='strict', decode_responses=False,
                  socket_read_size=4096, name=None, **kwargs):
+        '''
+        Called by all subclasses. The parameters control behavior
+        of this connection instance's socket. To set socket_timeout
+        or socket_connect_timeout to infinite, specify 0. If set
+        to None (the default), then defaults are used. See class
+        variables for those values. 
+        
+        :param host:
+        :type host:
+        :param port:
+        :type port:
+        :param db:
+        :type db:
+        :param password:
+        :type password:
+        :param socket_timeout: number of (fractional) seconds to wait for
+            a response from the Redis server
+        :type socket_timeout: float
+        :param socket_connect_timeout: number of (fractional) seconds to wait when
+            connecting to the Redis server
+        :type socket_connect_timeout: float
+        :param socket_keepalive:
+        :type socket_keepalive:
+        :param socket_keepalive_options:
+        :type socket_keepalive_options:
+        :param retry_on_timeout:
+        :type retry_on_timeout:
+        :param encoding:
+        :type encoding:
+        :param encoding_errors:
+        :type encoding_errors:
+        :param decode_responses:
+        :type decode_responses:
+        :param socket_read_size:
+        :type socket_read_size:
+        :param name:
+        :type name:
+        '''
         self.pid = os.getpid()
         self.host = host
         self.port = int(port)
         self.db = db
         self._name = name
         self.password = password
-        self.socket_timeout = socket_timeout
-        self.socket_connect_timeout = socket_connect_timeout or socket_timeout
+        if socket_timeout is None:
+            self.socket_timeout = Connection.REDIS_RESPONSE_TIMEOUT
+        else:
+            self.socket_timeout = socket_timeout
+        self.socket_connect_timeout = socket_connect_timeout if socket_connect_timeout is not None else self.socket_timeout
         self.socket_keepalive = socket_keepalive
         self.socket_keepalive_options = socket_keepalive_options or {}
         self.socket_read_size = socket_read_size
@@ -437,18 +486,22 @@ class OneShotConnection(Connection):
         if rawRes[0] == '+':
             return(rawRes[1:-len(SYM_CRLF)])
         
-        # Raw result must start with: 2 elements to follow (*2\r\n);
-        # length indicator '$':
-        if not rawRes.startswith(Connection.WIRE_PROTOCOL_STR_START):
+        # Raw result must start with: *<int>\r\n, followed by length indicator '$':
+        # like this: '*3\r\n$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'\r\n
+
+        preamble_match = Connection.WIRE_PROTOCOL_STR_START_PATTERN.match(rawRes)         
+        if preamble_match is None:
             raise ResponseError("Server did not return a string (string preamble missing); returned '%s'" % rawRes)
+        else:
+            preamble_len = preamble_match.end() - preamble_match.start()
         
-        match = Connection.INT_PATTERN.search(rawRes[len(Connection.WIRE_PROTOCOL_STR_START):])
+        match = Connection.INT_PATTERN.search(rawRes[preamble_len:])
         if match is None:
             raise ResponseError("Server did not return a string (string length missing); returned '%s'" % rawRes)
 
-        intEnd = match.end()
-        # Len of string is the given length minus the terminator:
-        strLen = rawRes[match.start(), intEnd] - len(SYM_CRLF)
+        intEnd = match.end() + preamble_len
+        # Read the string length, in above example: 9:
+        strLen = int(rawRes[preamble_len:intEnd - match.start()])
         # String starts after the \r\n that terminates
         # the string length:
         strStart = intEnd + 2

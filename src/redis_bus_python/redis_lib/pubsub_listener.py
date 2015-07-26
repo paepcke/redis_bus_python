@@ -73,9 +73,10 @@ class PubSubListener(threading.Thread):
             connection_pool.release(conn)
         self.reset()
         
-        # Start a connection to the server, ignoring
-        # the (hopefully) resulting PONG:
-        self.execute_command('PING') 
+        # Create a connection for incoming messages;
+        # it will be monitored by the run() method:
+        self.connection = self.connection_pool.get_connection('PubSubInMsgs',self.shard_hint)
+        self.connection.connect()
 
         # Start listening on that connection:        
         self.start()
@@ -193,22 +194,19 @@ class PubSubListener(threading.Thread):
         return bool(self.channels or self.patterns)
 
     def execute_command(self, *args, **kwargs):
-        "Execute a publish/subscribe command"
+        '''
+        Execute a publish/subscribe command. Returns the
+        connection on which the request went to the server.
+        The caller can then choose to retrieve the response,
+        or not.
+        '''
 
-        # NOTE: don't parse the response in this function. it could pull a
-        # legitmate message off the stack if the connection is already
-        # subscribed to one or more channels
-
-        if self.connection is None:
-            self.connection = self.connection_pool.get_connection(
-                'PubSubInMsgs',
-                self.shard_hint
-            )
-            # register a callback that re-subscribes to any channels we
-            # were listening to when we were disconnected
-            self.connection.register_connect_callback(self.on_connect)
-        connection = self.connection
-        self._execute(connection, connection.send_command, *args)
+        #***************
+        #*****conn = self.oneshot_connection_pool.get_connection('subscribe')
+        conn = self.connection
+        #***************
+        self._execute(conn, conn.send_command, *args)
+        return conn
 
     def _execute(self, connection, command, *args):
         try:
@@ -226,7 +224,19 @@ class PubSubListener(threading.Thread):
             return command(*args)
 
     def parse_response(self, block=True, timeout=0):
-        "Parse the response from a publish/subscribe command"
+        '''
+        Parse an incoming message, so that handle_message()
+        can digest it.
+
+        :param block: if True, wait for answer
+        :type block: bool
+        :param timeout: raise exception if no response with timeout (fractional) seconds.
+        :type timeout: float
+        :return: string parsed from Redis wire protocol.
+        :raise TimeoutError: if server does not return a result within
+            timeout (fractional) seconds.
+        '''
+        
         connection = self.connection
         if not block and not connection.can_read(timeout=timeout):
             return None
@@ -253,20 +263,7 @@ class PubSubListener(threading.Thread):
         self.patterns.acquire()
 
         try:
-            # Make sure the subscribe event flag is initially clear:
-            self.patterns.clearSubscribeAckArrived()
-    
             ret_val = self.execute_command('PSUBSCRIBE', *iterkeys(new_patterns))
-    
-            # Wait for handle_message() to announce that the 
-            # subscribe ack from the Redis server has arrived:
-            
-            ackHappened = self.patterns.awaitSubscribeAck()
-            if not ackHappened:
-                # If someone called close, just return:
-                if self.done:
-                    return
-                raise ResponseError('Redis server did not acknowledge psubscribe request within %d seconds' % PubSubListener.CMD_ACK_TIMEOUT)
     
             # Now update the self.patterns data structure;
             # acquire the access lock.
@@ -275,7 +272,6 @@ class PubSubListener(threading.Thread):
             # for the reconnection.):
             
             self.patterns.update(new_patterns)
-            self.patterns.clearSubscribeAckArrived()
         finally:
             self.patterns.release()
 
@@ -294,28 +290,12 @@ class PubSubListener(threading.Thread):
         except KeyError:
             block = False
             
-            
         # Get the access lock to the dict that
         # holds the pattern-subscriptions:
         self.patterns.acquire()
-        
         try:
-            
-            # Make sure the unsubscribe event flag is initially clear:
-            self.patterns.clearUnsubscribeAckArrived()
-    
             # Send unsubscribe command to the server:
             cmdRes = self.execute_command('PUNSUBSCRIBE', *args)
-    
-            # If block, wait for handle_message() to announce that the 
-            # punsubscribe ack from the Redis server has arrived:
-            if block:
-                ackHappened = self.patterns.awaitUnsubscribeAck()
-                if not ackHappened:
-                    # If someone called close, just return:
-                    if self.done:
-                        return
-                    raise ResponseError('Redis server did not acknowledge punsubscribe request within %d seconds' % PubSubListener.CMD_ACK_TIMEOUT)
     
             # Now update the self.patterns data structure;
             # acquire the access lock.
@@ -325,7 +305,6 @@ class PubSubListener(threading.Thread):
             
             for pattern in args:
                 del self.patterns[pattern]
-            self.patterns.clearUnsubscribeAckArrived()
         finally:
             self.patterns.release()
             
@@ -351,22 +330,16 @@ class PubSubListener(threading.Thread):
         self.channels.acquire()
 
         try:
-            
-            # Make sure the subscribe event flag is initially clear:
-            self.channels.clearSubscribeAckArrived()
-    
             # Send subscribe cmd to server
-            ret_val = self.execute_command('SUBSCRIBE', *iterkeys(new_channels))
-    
-            # Wait for handle_message() to announce that the 
-            # subscribe ack from the Redis server has arrived:
+            conn = self.execute_command('SUBSCRIBE', *iterkeys(new_channels))
             
-            ackHappened = self.channels.awaitSubscribeAck()
-            if not ackHappened:
-                # If someone called close, just return:
-                if self.done:
-                    return
-                raise ResponseError('Redis server did not acknowledge subscribe request within %d seconds' % PubSubListener.CMD_ACK_TIMEOUT)
+            try:
+                #***************
+                #****ack = conn.read_string()
+                ack = conn.read_response()
+                #***************
+            except TimeoutError as e:
+                raise TimeoutError("Cannot subscribe to %s: %s" % (args if args else '' + str(kwargs.keys()) if len(kwargs) > 0 else '', `e`))
     
             # Now update the self.channels data structure;
             # acquire the access lock.
@@ -375,11 +348,8 @@ class PubSubListener(threading.Thread):
             # for the reconnection.):
             
             self.channels.update(new_channels)
-            self.channels.clearSubscribeAckArrived()
         finally:
             self.channels.release()
-    
-        return ret_val
 
     def unsubscribe(self, *args, **kwargs):
         """
@@ -399,22 +369,8 @@ class PubSubListener(threading.Thread):
         self.channels.acquire()
 
         try:
-            # Make sure the unsubscribe event flag is initially clear:
-            self.channels.clearUnsubscribeAckArrived()
-    
             # Send unsubscribe command to the server:
             cmdRes = self.execute_command('UNSUBSCRIBE', *args)
-    
-            # If block, wait for handle_message() to announce that the 
-            # unsubscribe ack from the Redis server has arrived:
-            
-            if block:
-                ackHappened = self.channels.awaitUnsubscribeAck()
-                if not ackHappened:
-                    # If someone called close, just return:
-                    if self.done:
-                        return
-                    raise ResponseError('Redis server did not acknowledge unsubscribe request within %d seconds' % PubSubListener.CMD_ACK_TIMEOUT)
     
             # Now update the self.channels data structure;
             # acquire the access lock.
@@ -424,7 +380,6 @@ class PubSubListener(threading.Thread):
             
             for channel in args:
                 del self.channels[channel]
-            self.channels.clearUnsubscribeAckArrived()
         finally:
             self.channels.release()
             
