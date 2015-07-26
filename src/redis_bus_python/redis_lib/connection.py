@@ -52,7 +52,7 @@ class Connection(object):
                  socket_keepalive=False, socket_keepalive_options=None,
                  retry_on_timeout=False, encoding='utf-8',
                  encoding_errors='strict', decode_responses=False,
-                 parser_class=DefaultParser, socket_read_size=4096, name=None):
+                 socket_read_size=4096, name=None, **kwargs):
         self.pid = os.getpid()
         self.host = host
         self.port = int(port)
@@ -63,6 +63,7 @@ class Connection(object):
         self.socket_connect_timeout = socket_connect_timeout or socket_timeout
         self.socket_keepalive = socket_keepalive
         self.socket_keepalive_options = socket_keepalive_options or {}
+        self.socket_read_size = socket_read_size
         self.expectingOrphanedReturn = False
         self.orphanExpirationTime = time.time()
         self.retry_on_timeout = retry_on_timeout
@@ -70,7 +71,6 @@ class Connection(object):
         self.encoding_errors = encoding_errors
         self.decode_responses = decode_responses
         self._sock = None
-        self._parser = parser_class(socket_read_size=socket_read_size)
         self._description_args = {
             'host': self.host,
             'port': self.port,
@@ -94,27 +94,6 @@ class Connection(object):
     @name.setter
     def name(self, new_name):
         self._name = new_name
-
-    @property
-    def subscribeAckEvent(self):
-        '''
-        Returns an Event() object that will be set()
-        when the acknowledgment from the Redis server
-        to a prior subscribe command arrives.
-        
-        '''
-        return self._parser.subscribeAckEvent
-
-    @property
-    def unsubscribeAckEvent(self):
-        '''
-        Returns an Event() object that will be set()
-        when the acknowledgment from the Redis server
-        to a prior unsubscribe command arrives.
-        
-        '''
-        return self._parser.unsubscribeAckEvent
-
 
     def register_connect_callback(self, callback):
         self._connect_callbacks.append(callback)
@@ -145,89 +124,11 @@ class Connection(object):
         for callback in self._connect_callbacks:
             callback(self)
 
-    def _connect(self):
-        "Create a TCP socket connection"
-        # we want to mimic what socket.create_connection does to support
-        # ipv4/ipv6, but we want to set options prior to calling
-        # socket.connect()
-        err = None
-        for res in socket.getaddrinfo(self.host, self.port, 0,
-                                      socket.SOCK_STREAM):
-            family, socktype, proto, canonname, socket_address = res  #@UnusedVariable
-            sock = None
-            try:
-                sock = socket.socket(family, socktype, proto)
-                # TCP_NODELAY
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-                # TCP_KEEPALIVE
-                if self.socket_keepalive:
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-                    for k, v in iteritems(self.socket_keepalive_options):
-                        sock.setsockopt(socket.SOL_TCP, k, v)
-
-                # set the socket_connect_timeout before we connect
-                sock.settimeout(self.socket_connect_timeout)
-
-                # connect
-                sock.connect(socket_address)
-
-                # set the socket_timeout now that we're connected
-                sock.settimeout(self.socket_timeout)
-                return sock
-
-            except socket.error as _:
-                err = _
-                if sock is not None:
-                    sock.close()
-
-        if err is not None:
-            raise err
-        raise socket.error("socket.getaddrinfo returned an empty list")
-
-    def _error_message(self, exception):
-        # args for socket.error can either be (errno, "message")
-        # or just "message"
-        if len(exception.args) == 1:
-            return "Error connecting to %s:%s. %s." % \
-                (self.host, self.port, exception.args[0])
-        else:
-            return "Error %s connecting to %s:%s. %s." % \
-                (exception.args[0], self.host, self.port, exception.args[1])
+    def disconnect(self):
+        self._disconnect()
 
     def on_connect(self):
-        "Initialize the connection, authenticate and select a database"
-        self._parser.on_connect(self)
         self._on_connect()
-
-    def _on_connect(self):
-        
-        # if a password is specified, authenticate
-        if self.password:
-            self.send_command('AUTH', self.password)
-            if nativestr(self.read_response()) != 'OK':
-                raise AuthenticationError('Invalid Password')
-
-        # if a database is specified, switch to it
-        if self.db:
-            self.send_command('SELECT', self.db)
-            if nativestr(self.read_response()) != 'OK':
-                raise ConnectionError('Invalid Database')
-
-    def disconnect(self):
-        "Disconnects from the Redis server"
-        self._parser.on_disconnect()
-        self._disconnect()
-        
-    def _disconnect(self):
-        if self._sock is None:
-            return
-        try:
-            self._sock.shutdown(socket.SHUT_RDWR)
-            self._sock.close()
-        except socket.error:
-            pass
-        self._sock = None
 
     def send_packed_command(self, command):
         "Send an already packed command to the Redis server"
@@ -258,39 +159,6 @@ class Connection(object):
         "Pack and send a command to the Redis server"
         self.send_packed_command(self.pack_command(*args))
 
-    def can_read(self, timeout=0):
-        "Poll the socket to see if there's data that can be read."
-        sock = self._sock
-        if not sock:
-            self.connect()
-            sock = self._sock
-        return self._parser.can_read() or \
-            bool(select([sock], [], [], timeout)[0])
-
-    def read_int(self):
-        '''
-        Read an (expected) integer/long result from a previously sent command.
-        
-        :return: the expected integer/long response
-        :rtype: long
-        :raise InvalidResponse: if a non-integer is received from the Redis server.
-        '''
-        try:
-            return self._parser.read_int()
-        except:
-            self.disconnect()
-            raise
-
-    def read_response(self):
-        "Read the response from a previously sent command"
-        try:
-            response = self._parser.read_response()
-        except:
-            self.disconnect()
-            raise
-        if isinstance(response, ResponseError):
-            raise response
-        return response
 
     def encode(self, value):
         "Return a bytestring representation of the value"
@@ -349,28 +217,6 @@ class Connection(object):
         output.append(buff)
         return output
 
-    def pack_publish_command(self, channel, msg):
-        '''
-        Given a message and a channel, return a string that
-        is the corresponding wire message. This is an optimized
-        special case for PUBLISH messages. 
-        
-        :param channel: the channel to which to publish
-        :type channel: string
-        :param msg: the message to publish
-        :type msg: string
-        '''
-        wire_msg = '\r\n'.join(['*3',                # 3 parts to follow
-                                '$7',                # 7 letters
-                                'PUBLISH',           # <command>
-                                '$%d' % len(channel),# num topic-letters to follow 
-                                channel,             # <topic>
-                                '$%d' % len(msg),    # num msg-letters to follow
-                                msg,                 # <msg>
-                                ''                   # forces a closing \r\n
-                                ])
-        return wire_msg
-
 
     def pack_commands(self, commands):
         "Pack multiple commands into the Redis protocol"
@@ -392,6 +238,136 @@ class Connection(object):
             output.append(SYM_EMPTY.join(pieces))
         return output
 
+    # --------------------- Connection Private Methods -----------------------
+    
+    def _on_connect(self):
+        
+        # if a password is specified, authenticate
+        if self.password:
+            self.send_command('AUTH', self.password)
+            if nativestr(self.read_response()) != 'OK':
+                raise AuthenticationError('Invalid Password')
+
+        # if a database is specified, switch to it
+        if self.db:
+            self.send_command('SELECT', self.db)
+            if nativestr(self.read_response()) != 'OK':
+                raise ConnectionError('Invalid Database')
+
+    def _disconnect(self):
+        if self._sock is None:
+            return
+        try:
+            self._sock.shutdown(socket.SHUT_RDWR)
+            self._sock.close()
+        except socket.error:
+            pass
+        self._sock = None
+
+    def _connect(self):
+        "Create a TCP socket connection"
+        # we want to mimic what socket.create_connection does to support
+        # ipv4/ipv6, but we want to set options prior to calling
+        # socket.connect()
+        err = None
+        for res in socket.getaddrinfo(self.host, self.port, 0,
+                                      socket.SOCK_STREAM):
+            family, socktype, proto, canonname, socket_address = res  #@UnusedVariable
+            sock = None
+            try:
+                sock = socket.socket(family, socktype, proto)
+                # TCP_NODELAY
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+                # TCP_KEEPALIVE
+                if self.socket_keepalive:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                    for k, v in iteritems(self.socket_keepalive_options):
+                        sock.setsockopt(socket.SOL_TCP, k, v)
+
+                # set the socket_connect_timeout before we connect
+                sock.settimeout(self.socket_connect_timeout)
+
+                # connect
+                sock.connect(socket_address)
+
+                # set the socket_timeout now that we're connected
+                sock.settimeout(self.socket_timeout)
+                return sock
+
+            except socket.error as _:
+                err = _
+                if sock is not None:
+                    sock.close()
+
+        if err is not None:
+            raise err
+        raise socket.error("socket.getaddrinfo returned an empty list")
+
+    def _error_message(self, exception):
+        # args for socket.error can either be (errno, "message")
+        # or just "message"
+        if len(exception.args) == 1:
+            return "Error connecting to %s:%s. %s." % \
+                (self.host, self.port, exception.args[0])
+        else:
+            return "Error %s connecting to %s:%s. %s." % \
+                (exception.args[0], self.host, self.port, exception.args[1])
+
+#----------------------------------
+
+class ParsedConnection(Connection):
+
+    def __init__(self, parser_class=DefaultParser, **kwargs):
+        super(ParsedConnection, self).__init__(**kwargs)
+        self._parser = parser_class(socket_read_size=self.socket_read_size)
+
+    def on_connect(self):
+        "Initialize the connection, authenticate and select a database"
+        self._parser.on_connect(self)
+        self._on_connect()
+
+    def disconnect(self):
+        "Disconnects from the Redis server"
+        self._parser.on_disconnect()
+        self._disconnect()
+        
+
+    def can_read(self, timeout=0):
+        "Poll the socket to see if there's data that can be read."
+        sock = self._sock
+        if not sock:
+            self.connect()
+            sock = self._sock
+        return self._parser.can_read() or \
+            bool(select([sock], [], [], timeout)[0])
+
+    def read_int(self):
+        '''
+        Read an (expected) integer/long result from a previously sent command.
+        
+        :return: the expected integer/long response
+        :rtype: long
+        :raise InvalidResponse: if a non-integer is received from the Redis server.
+        '''
+        try:
+            return self._parser.read_int()
+        except:
+            self.disconnect()
+            raise
+
+    def read_response(self):
+        "Read the response from a previously sent command"
+        try:
+            response = self._parser.read_response()
+        except:
+            self.disconnect()
+            raise
+        if isinstance(response, ResponseError):
+            raise response
+        return response
+
+
 
 class OneShotConnection(Connection):
     '''
@@ -408,7 +384,7 @@ class OneShotConnection(Connection):
     '''
     
     def __init__(self, host='localhost', port=6379, **kwargs):
-        super(OneShotConnection, self).__init__(host, port, kwargs)
+        super(OneShotConnection, self).__init__(host=host, port=port, **kwargs)
         
         self.returnedResult = None
         self.connect()
@@ -512,6 +488,50 @@ class OneShotConnection(Connection):
                     raise TimeoutError("Redis server did not produce a response within %2.2f seconds" % timeout)                    
 
         return rawRes
+
+    def pack_publish_command(self, channel, msg):
+        '''
+        Given a message and a channel, return a string that
+        is the corresponding wire message. This is an optimized
+        special case for PUBLISH messages. 
+        
+        :param channel: the channel to which to publish
+        :type channel: string
+        :param msg: the message to publish
+        :type msg: string
+        '''
+        wire_msg = '\r\n'.join(['*3',                # 3 parts to follow
+                                '$7',                # 7 letters
+                                'PUBLISH',           # <command>
+                                '$%d' % len(channel),# num topic-letters to follow 
+                                channel,             # <topic>
+                                '$%d' % len(msg),    # num msg-letters to follow
+                                msg,                 # <msg>
+                                ''                   # forces a closing \r\n
+                                ])
+        return wire_msg
+
+#     def pack_subscription_command(self, channel, msg):
+#         '''
+#         Given a message and a channel, return a string that
+#         is the corresponding wire message. This is an optimized
+#         special case for PUBLISH messages. 
+#         
+#         :param channel: the channel to which to publish
+#         :type channel: string
+#         :param msg: the message to publish
+#         :type msg: string
+#         '''
+#         wire_msg = '\r\n'.join(['*3',                # 3 parts to follow
+#                                 '$7',                # 7 letters
+#                                 'PUBLISH',           # <command>
+#                                 '$%d' % len(channel),# num topic-letters to follow 
+#                                 channel,             # <topic>
+#                                 '$%d' % len(msg),    # num msg-letters to follow
+#                                 msg,                 # <msg>
+#                                 ''                   # forces a closing \r\n
+#                                 ])
+#         return wire_msg
 
 class SSLConnection(Connection):
     description_format = "SSLConnection<host=%(host)s,port=%(port)s,db=%(db)s>"

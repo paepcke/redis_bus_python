@@ -25,6 +25,19 @@ def pipeline(redis_obj):
     yield p
     p.execute()
 
+def list_or_args(keys, args):
+    # returns a single list combining keys and args
+    try:
+        iter(keys)
+        # a string or bytes instance can be iterated, but indicates
+        # keys wasn't passed as a list
+        if isinstance(keys, (basestring, bytes)):
+            keys = [keys]
+    except TypeError:
+        keys = [keys]
+    if args:
+        keys.extend(args)
+    return keys
 
 class dummy(object):
     """

@@ -69,7 +69,7 @@ class _TopicWaiter(threading.Thread):
         # The ignore_subscribe_messages=True prevents our message
         # handlers to constantly get called with confirmations of our
         # own publish/subscribe and other commands to the Redis server:
-        self.pubsub = self.rserver.pubsub(ignore_subscribe_messages=True)
+        self.pubsub = self.rserver.pubsub(host=host, port=port, ignore_subscribe_messages=True)
         
         # Function (rather than method) to use as callback when
         # subscribing to the underlying Redis system:

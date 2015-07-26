@@ -142,9 +142,6 @@ class PythonParser(BaseParser):
             $<n>    string of length <n>
             *<num>    start of array with <num> elements
 
-        When the message to parse is the acknowledgment of
-        a SUBSCRIBE or UNSUBSCRIBE command, this method
-        will set() event self.unsubscribeAckEvent/self.unsubscribeAckEvent.
 
         :return: response string
         :rtype: string

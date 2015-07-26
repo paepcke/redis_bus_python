@@ -292,14 +292,14 @@ if __name__ == '__main__':
     
 #     print('------Publish to unsubscribed topic; block == False------')
 #     tester.publishToUnsubscribedTopic(10000, 100, block=False)
-    print('------Publish to unsubscribed topic; block == True------')
-    tester.publishToUnsubscribedTopic(10000, 100, block=True)
-    print('--------------------')
+#     print('------Publish to unsubscribed topic; block == True------')
+#     tester.publishToUnsubscribedTopic(10000, 100, block=True)
+#     print('--------------------')
      
-    sys.exit()
+#    sys.exit()
     
-    sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
-    sys.stdin.readline()
+#     sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
+#     sys.stdin.readline()
 
 #     print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
 #     tester.publishToSubscribedTopic(10000,100, block=False, sameProcessListener=False)
@@ -307,8 +307,8 @@ if __name__ == '__main__':
 #     tester.publishToSubscribedTopic(10000,100, block=True, sameProcessListener=False)
 #     print('--------------------')    
     
-    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
-    tester.syncPublishing(10000,100, block=False)
+#    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
+#    tester.syncPublishing(10000,100, block=False)
     print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
     tester.syncPublishing(10000,100, block=True)
     print('--------------------')    

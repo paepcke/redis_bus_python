@@ -8,6 +8,9 @@ import unittest
 from redis_bus_python.redis_lib.connection import OneShotConnection
 
 
+TEST_ALL = False
+
+
 class TestConnection(unittest.TestCase):
     '''
     Tests connection facilities of Redis libraray.
@@ -23,11 +26,13 @@ class TestConnection(unittest.TestCase):
     def tearDown(self):
         self.conn.disconnect()
 
+    @unittest.skipIf(not TEST_ALL, "Temporarily disabled")
     def testSimpleStringReturn(self):
         self.conn.send_command('PING')
         res = self.conn.read_string()
         self.assertEqual('PONG', res)
-        
+
+    @unittest.skipIf(not TEST_ALL, "Temporarily disabled")        
     def testIntReturn(self):
         self.conn._sock.sendall(TestConnection.PUBLISH_STR)
         res = self.conn.read_int()
