@@ -56,7 +56,7 @@ class BaseParser(object):
             return self.EXCEPTION_CLASSES[error_code](response)
         return ResponseError(response)
 
-    def parse_response(self, response=None, socket_buffer=None, block=True, timeout=None):
+    def parse_response(self, response=None, socket_buffer=None, encoding=None, block=True, timeout=None):
         '''
         Given a full line of Redis wire protocol,
         parse that line, requesting additional lines if
@@ -79,6 +79,9 @@ class BaseParser(object):
         :rtype: [string]
         :raise TimeoutError
         '''
+
+        if encoding is None:
+            encoding = self.connection.encoding
 
         if response is None:
             response = socket_buffer.readline(block=block, timeout=timeout)
@@ -115,16 +118,20 @@ class BaseParser(object):
             if length == -1:
                 # Null string:
                 return None
-            response = self._buffer.read(length)
+            response = socket_buffer.read(length)
                         
         # multi-bulk response
         elif byte == '*':
             length = int(response)
             if length == -1:
                 return None
-            response = [self.parse_response(block=block, timeout=timeout) for _ in xrange(length)]
-        if isinstance(response, bytes) and self.encoding:
-            response = response.decode(self.encoding)
+            response = [self.parse_response(response=None, 
+                                            socket_buffer=socket_buffer, 
+                                            block=block, 
+                                            timeout=timeout,
+                                            encoding=encoding) for _ in xrange(length)]
+        if isinstance(response, bytes) and encoding:
+            response = response.decode(encoding)
         #***********
         #print('Response: %s' % byte + '|' + str(response))
         #***********

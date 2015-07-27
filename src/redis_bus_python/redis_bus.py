@@ -280,9 +280,9 @@ class BusAdapter(object):
         for subscription in self.mySubscriptions():
             self.unsubscribeFromTopic(subscription)
             
-        self.topicWaiterThread.stop()
+        #******self.topicWaiterThread.stop()
         # Wait up to 3sec for the TopicWaiter thread to wind down:
-        self.topicWaiterThread.join(3)
+        #*****self.topicWaiterThread.join(3)
         
         # Stop all the delivery threads:
         for topicThread in self.topicThreads.values():

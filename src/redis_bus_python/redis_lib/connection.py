@@ -490,7 +490,7 @@ class OneShotConnection(Connection):
         try:
             intRes = int(rawRes[1:].strip())
         except (ValueError, IndexError):
-            raise ResponseError("Server did not return an int; returned '%s'" % intRes)
+            raise ResponseError("Server did not return an int; returned '%s'" % rawRes)
         return intRes
     
     def read(self, num_bytes, block=True, timeout=None):
@@ -642,36 +642,17 @@ class OneShotConnection(Connection):
         if rawRes[0] == '+':
             return(rawRes[1:-len(SYM_CRLF)])
         
-        # Raw result must start with length indicator '$':
-        # like this: '$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'\r\n
-
-        preamble_match = Connection.WIRE_PROTOCOL_STR_START_PATTERN.match(rawRes)         
-        if preamble_match is None:
-            raise ResponseError("Server did not return a string (string preamble missing); returned '%s'" % rawRes)
-        else:
-            preamble_len = preamble_match.end() - preamble_match.start()
+        # Looking at '$<strLen>':
+        try:
+            str_len = int(rawRes[1:])
+        except ValueError:
+            raise ResponseError("Expected integer string length, but received '%s'" % rawRes)
         
-        match = Connection.INT_PATTERN.search(rawRes[preamble_len:])
-        if match is None:
-            raise ResponseError("Server did not return a string (string length missing); returned '%s'" % rawRes)
-
-        intEnd = match.end() + preamble_len
+        res_str =  self.readline(block=block, timeout=timeout)
+        if len(res_str) != str_len:
+            raise InvalidResponse("String length %d is not the length of '%s'" % (str_len, res_str))
         
-        # Read the string length, in above example: 9:
-        strLen = int(rawRes[preamble_len:intEnd - match.start()])
-
-        # Did we read at least the string length's worth from the socket?
-        # (the two's account for the CR/LFs):        
-        str_len_read = len(rawRes[intEnd+2:-2])
-        if str_len_read < strLen:
-            # Read enough bytes to get the end of the string:
-            rawRes += self.read_nbytes_from_socket(strLen + 2 - str_len_read, timeout=timeout)
-        
-        # String starts after the \r\n that terminates
-        # the string length:
-        strStart = intEnd + 2
-        res = rawRes[strStart:strStart+strLen]
-        return res
+        return res_str
 
     def write_socket(self, msg):
         '''
@@ -698,7 +679,7 @@ class OneShotConnection(Connection):
         :rtype: [string]
         '''
         # Parse a response
-        return self._parser.parse_response(response, self)
+        return self._parser.parse_response(response, self, encoding=self.encoding)
         
 
     def pack_publish_command(self, channel, msg):

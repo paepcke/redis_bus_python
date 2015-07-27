@@ -38,7 +38,7 @@ class PerformanceTesterEchoServer(threading.Thread):
         # with each message:
         self.testBus.subscribeToTopic('test', 
                                       deliveryCallback=functools.partial(self.messageReceiver)) 
-        self.eventForStopping = threading.Event()
+        self.interruptEvent = threading.Event()
         self.numEchoed = 0
         self.mostRecentRxTime = None
         self.printedResetting = False
@@ -106,7 +106,7 @@ class PerformanceTesterEchoServer(threading.Thread):
         threading.Timer(PerformanceTesterEchoServer.MAX_IDLE_TIME, functools.partial(self.resetEchoedCounter)).start()
 
     def stop(self):
-        self.eventForStopping.set()
+        self.interruptEvent.set()
         
     def printTiming(self, startTime=None):
         currTime = time.time()
@@ -123,7 +123,7 @@ class PerformanceTesterEchoServer(threading.Thread):
     def run(self):
         self.startTime = time.time()
         self.startIdleTimer()
-        self.eventForStopping.wait()
+        self.interruptEvent.wait()
         self.testBus.unsubscribeFromTopic('test')
         self.testBus.close()
 

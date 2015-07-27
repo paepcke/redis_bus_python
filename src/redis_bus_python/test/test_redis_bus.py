@@ -153,7 +153,7 @@ class ReceptionTester(threading.Thread):
         self.testBus.subscribeToTopic('myTopic', 
                                       deliveryCallback=functools.partial(self.messageReceiver), 
                                       context={'foo' : 10, 'bar' : 'my string'})
-        self.eventForStopping = threading.Event()
+        self.interruptEvent = threading.Event()
         self.done = False
         
     def messageReceiver(self, busMsg, context=None):
@@ -181,10 +181,10 @@ class ReceptionTester(threading.Thread):
 
     
     def stop(self):
-        self.eventForStopping.set()
+        self.interruptEvent.set()
             
     def run(self):
-        self.eventForStopping.wait()
+        self.interruptEvent.wait()
         self.testBus.close()
     
 

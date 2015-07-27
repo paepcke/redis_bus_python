@@ -33,7 +33,7 @@ class ReceptionTester(threading.Thread):
         self.testBus.subscribeToTopic(topic_to_wait_on, 
                                       deliveryCallback=functools.partial(self.messageReceiver), 
                                       context=msgMd5)
-        self.eventForStopping = threading.Event()
+        self.interruptEvent = threading.Event()
         self.done = False
                 
     def messageReceiver(self, busMsg, context=None):
@@ -58,11 +58,11 @@ class ReceptionTester(threading.Thread):
 
     
     def stop(self):
-        self.eventForStopping.set()
+        self.interruptEvent.set()
             
     def run(self):
         print("Sync-call test server started; listening on %s" % self.topic_to_wait_on)
-        self.eventForStopping.wait()
+        self.interruptEvent.wait()
         self.testBus.unsubscribeFromTopic('test')
         self.testBus.close()
 
