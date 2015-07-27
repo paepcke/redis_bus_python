@@ -425,6 +425,12 @@ class PubSubListener(threading.Thread):
             self.channels.release()
             
         return cmdRes
+    
+    def pub_round_trip(self, to_topic, msg, from_topic):
+        conn = self.oneshot_connection_pool.get_connection()
+        
+        
+        
 
     def get_message(self, ignore_subscribe_messages=False, timeout=0):
         """
