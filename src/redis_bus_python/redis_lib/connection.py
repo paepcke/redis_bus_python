@@ -1,5 +1,6 @@
 from __future__ import with_statement
 
+import errno
 from itertools import chain
 import os
 from parser import Token
@@ -461,6 +462,15 @@ class OneShotConnection(Connection):
         super(OneShotConnection, self).__init__(host=host, port=port, **kwargs)
         
         self.returnedResult = None
+        
+        # When more bytes have been pulled from the server
+        # than were requested in one of the read_xxx() methods
+        # below, the bytes are saved in the following:
+        self.read_bytes = None
+        
+        # Similarly, readline() remembers lines
+        self.read_lines = []
+        
         self.connect()
         
     def read_int(self, block=True, timeout=None):
@@ -485,6 +495,62 @@ class OneShotConnection(Connection):
         except (ValueError, IndexError):
             raise ResponseError("Server did not return an int; returned '%s'" % intRes)
         return intRes
+    
+    def readline(self, block=True, timeout=None):
+
+            if len(self.read_lines) > 0:
+                return self.read_lines.pop(0)
+            while True:
+                try:
+                    # Wait for incoming messages:
+                    if block:
+                        if timeout is None:
+                            # Block forever:
+                            (readReady, writeReady, errReady) = select([self._sock],[],[]) #@UnusedVariable
+                        else:
+                            # Block, but with timeout:
+                            (readReady, writeReady, errReady) = select([self._sock],[],[], timeout) #@UnusedVariable
+                    else:
+                        # Just poll:
+                        (readReady, writeReady, errReady) = select([self._sock],[],[], 0) #@UnusedVariable
+                    if len(readReady) == 0:
+                        # Timeout out:
+                        raise TimeoutError('Full line was not received from server within %f2.2 seconds' % timeout)
+                    
+                    # Something arrived on the socket.                    
+                    data = self._sock.recv(self.socket_read_size)
+                    # An empty string indicates the server shutdown the socket
+                    if isinstance(data, bytes) and len(data) == 0:
+                        raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
+                    
+                    # If over-read before, prepend that remnant:
+                    if self.remnant is not None:
+                        data = self.remnant + data
+                        self.remnant = None
+                except socket.error as e:
+                    if e.args[0] == errno.EAGAIN:
+                        time.sleep(0.3)
+                        continue
+                    else:
+                        raise
+                    
+                if SYM_CRLF in data:
+                    
+                    lines = data.split(SYM_CRLF)
+                                        
+                    # str.split() adds an empty str if the
+                    # str ends in the split symbol. If str does
+                    # not end in the split symbol, the resulting
+                    # array has the unfinished fragment at the end.
+                    
+                    for line in lines[:-1]:
+                        self.read_lines.append(line)
+                        
+                    # Final bytes may or may not have their
+                    # closing SYM_CRLF yet:
+                    if not data.endswith(SYM_CRLF):
+                        # Have a partial line at the end:
+                        self.remnant = lines[-1]
     
     def read_string(self, block=True, timeout=None):
         '''
@@ -525,8 +591,17 @@ class OneShotConnection(Connection):
             raise ResponseError("Server did not return a string (string length missing); returned '%s'" % rawRes)
 
         intEnd = match.end() + preamble_len
+        
         # Read the string length, in above example: 9:
         strLen = int(rawRes[preamble_len:intEnd - match.start()])
+
+        # Did we read at least the string length's worth from the socket?
+        # (the two's account for the CR/LFs):        
+        str_len_read = len(rawRes[intEnd+2:-2])
+        if str_len_read < strLen:
+            # Read enough bytes to get the end of the string:
+            rawRes += self.read_nbytes_from_socket(strLen + 2 - str_len_read, timeout=timeout)
+        
         # String starts after the \r\n that terminates
         # the string length:
         strStart = intEnd + 2
@@ -535,6 +610,36 @@ class OneShotConnection(Connection):
 
     def write_socket(self, msg):
         self._sock.sendall(msg)
+
+    def read_nbytes_from_socket(self, num_bytes_to_read, timeout=None):
+        '''
+        Given a number of bytes to read from this connection's
+        socket, return a string with of that length, or raise
+        TimeoutError.
+        
+        :param num_bytes_to_read: number of bytes to read from socket
+        :type num_bytes_to_read: int
+        :param timeout: (fractional) seconds before timing out and throwing an exception
+        :type timeout: float
+        :return: string of length num_bytes_to_read
+        :rtype: string
+        :raise TimeoutError: if not enough bytes are available on the 
+            socket within timeout
+        '''
+
+        # Make sure we don't have more coming from the server:
+        all_data_found = False
+        response_pieces = []
+        num_bytes_pulled = 0
+        while not all_data_found:
+            data = self.conn.read_socket(block=True, timeout=timeout)
+            num_bytes_pulled += len(data)
+            response_pieces.append(response_pieces)
+            if num_bytes_pulled >= num_bytes_to_read:
+                all_data_found = True
+        res = ''.join(response_pieces)
+        return res
+        
 
     def read_socket(self, block=True, timeout=None, buf_size=1024):
         '''

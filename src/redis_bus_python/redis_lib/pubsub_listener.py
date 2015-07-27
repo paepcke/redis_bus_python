@@ -483,10 +483,26 @@ class PubSubListener(threading.Thread):
         # Publish the request:
         self.conn.write_socket(publish_cmd)
         
-        # Wait for service's computed response:
-        self.conn.read_socket(block=True, timeout=timeout)
+        # Wait for the (at least) initial service's computed response;
+        # the read_socket() method will throw a timeout if necessary:
+        firstBatch = self.conn.read_socket(block=True, timeout=timeout)
         
-        #******** READ RESPONSE FROM CONN SOCKET.
+        # Make sure we don't have more coming from the server:
+        more_data_found = True
+        responsePieces = [] 
+        while more_data_found:
+            more_data = self.conn.read_socket(block=False)
+            if more_data is not None:
+                responsePieces.append(more_data)
+            else:
+                more_data_found = False
+        
+                
+            
+                
+        
+        
+        
         
         conn.write_socket(unsubscribe_cmd)
         # Read and discard the returned status.
