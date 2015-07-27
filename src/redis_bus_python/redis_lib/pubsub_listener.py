@@ -9,6 +9,7 @@ import time
 
 from redis_bus_python.redis_lib._compat import iteritems, imap, iterkeys, \
     nativestr
+from redis_bus_python.redis_lib.connection import Connection
 from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError, \
     ResponseError
 from redis_bus_python.redis_lib.utils import list_or_args
@@ -426,9 +427,76 @@ class PubSubListener(threading.Thread):
             
         return cmdRes
     
-    def pub_round_trip(self, to_topic, msg, from_topic):
+    def pub_round_trip(self, to_channel, msg, from_channel, timeout):
+        '''
+        Special bypass of main subscription path for the 
+        synchronous roundtrip case. It is used like a remote
+        procedure call to a service, which returns a value.
+        
+        This method uses its own OneShotConnection instance. 
+        The main connection on which subscriptions, publishing, 
+        and message listening are done(i.e. self.connection) is 
+        not involved. 
+         
+        The method first subscribes to the from_channel, and then 
+        publishes the given message to the to_channel. It then 
+        watches the OneShotConnection's socket for a return value
+        from a service at the other end. 
+        
+        NOTE again: this subscription will be for this OneShotConnection
+        instance! The main run() method uses a ParsedConnection instance
+        in self.connection. That is where the regular subscriptions
+        go, so that incoming messages on the new topic are actually
+        received. Messages for subscriptions made through this method 
+        will arrive at the socket of this connection, and must be
+        pulled from the socket. The run() loop will not pick them
+        up.
+        
+        
+        :param to_channel:
+        :type to_channel:
+        :param msg:
+        :type msg:
+        :param from_channel:
+        :type from_channel:
+        :param timeout: time to wait for the service to compute its
+            response, and send it. If None or zero, hangs forever.
+        :type timeout: float
+        :raise TimeoutError: if server does not send expected data.
+        '''
         conn = self.oneshot_connection_pool.get_connection()
         
+        subscribe_cmd   = conn.pack_subscription_command('SUBSCRIBE', from_channel)
+        publish_cmd     = conn.pack_publish_command(to_channel, msg)
+        unsubscribe_cmd = conn.pack_subscription_command('UNSUBSCRIBE', from_channel)
+            
+        conn.write_socket(subscribe_cmd)
+        # Read and discard the returned status.
+        # The method will throw a timeout error if the
+        # server does not send the status: 
+
+        conn.read_socket(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
+        # Ensure we have all of the status:
+        while conn.read_socket(block=False) is not None:
+            pass
+        
+        # Publish the request:
+        self.conn.write_socket(publish_cmd)
+        
+        # Wait for service's computed response:
+        self.conn.read_socket(block=True, timeout=timeout)
+        
+        #******** READ RESPONSE FROM CONN SOCKET.
+        
+        conn.write_socket(unsubscribe_cmd)
+        # Read and discard the returned status.
+        # The method will throw a timeout error if the
+        # server does not send the status: 
+
+        conn.read_socket(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
+        # Ensure we have all of the status:
+        while conn.read_socket(block=False) is not None:
+            pass
         
         
 

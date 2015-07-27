@@ -46,7 +46,7 @@ class Connection(object):
     # Socket timeout when awaiting a response
     # from the Redis server:
     REDIS_RESPONSE_TIMEOUT = 0.3 # sec
-
+    
     # Redis protocol start of a string:
     # 2 elements to follow (*2\r\n);
     # length indicator '$':
@@ -448,6 +448,14 @@ class OneShotConnection(Connection):
     anywhere. 
     
     '''
+
+    # Time to allow a service to compute a result,
+    # and return it. This timeout is used as  
+    # default in read_socket:
+    
+    SERVICE_RESPONSE_TIMEOUT = 2.0 # sec
+
+
     
     def __init__(self, host='localhost', port=6379, **kwargs):
         super(OneShotConnection, self).__init__(host=host, port=port, **kwargs)
@@ -471,7 +479,7 @@ class OneShotConnection(Connection):
         :raises TimeoutError: if no data arrives from server in time. 
         '''
         
-        rawRes = self._read_socket(block=block, timeout=timeout)
+        rawRes = self.read_socket(block=block, timeout=timeout)
         try:
             intRes = int(rawRes[1:].strip())
         except (ValueError, IndexError):
@@ -497,7 +505,7 @@ class OneShotConnection(Connection):
         :raises TimeoutError: if no data arrives from server in time. 
         '''
 
-        rawRes = self._read_socket(block=block, timeout=timeout, buf_size=2048)
+        rawRes = self.read_socket(block=block, timeout=timeout, buf_size=2048)
 
         # Is it a 'simple string', i.e. "+<str>"?
         if rawRes[0] == '+':
@@ -525,7 +533,10 @@ class OneShotConnection(Connection):
         res = rawRes[strStart:strStart+strLen]
         return res
 
-    def _read_socket(self, block=True, timeout=None, buf_size=1024):
+    def write_socket(self, msg):
+        self._sock.sendall(msg)
+
+    def read_socket(self, block=True, timeout=None, buf_size=1024):
         '''
         Read from the socket, and return the result
         
@@ -580,28 +591,29 @@ class OneShotConnection(Connection):
                                 ''                   # forces a closing \r\n
                                 ])
         return wire_msg
+    
+    
+    def pack_subscription_command(self, command, channel):
+        '''
+        Given a channel and a subscribe or unsubscribe name, return a string that
+        is the corresponding wire message. This is an optimized
+        special case for (un)subscribe messages.
+    
+        :param command: which command to construct; must be one of 
+            {SUBSCRIBE | UNSUBSCRIBE | PSUBSCRIBE | PUNSUBSCRIBE}
+        :type command: string
+        :param channel: the channel to which to subscribe
+        :type channel: string
+        '''
 
-#     def pack_subscription_command(self, channel, msg):
-#         '''
-#         Given a message and a channel, return a string that
-#         is the corresponding wire message. This is an optimized
-#         special case for PUBLISH messages. 
-#         
-#         :param channel: the channel to which to publish
-#         :type channel: string
-#         :param msg: the message to publish
-#         :type msg: string
-#         '''
-#         wire_msg = '\r\n'.join(['*3',                # 3 parts to follow
-#                                 '$7',                # 7 letters
-#                                 'PUBLISH',           # <command>
-#                                 '$%d' % len(channel),# num topic-letters to follow 
-#                                 channel,             # <topic>
-#                                 '$%d' % len(msg),    # num msg-letters to follow
-#                                 msg,                 # <msg>
-#                                 ''                   # forces a closing \r\n
-#                                 ])
-#         return wire_msg
+        wire_msg = '\r\n'.join(['*2',                  # 2 parts to follow
+                                '$%d' % len(command),  # number of letters in command
+                                command,               # <command>
+                                '$%d' % len(channel),  # num channel-letters to follow 
+                                channel,               # <topic>
+                                ''                     # forces a closing \r\n
+                                ])
+        return wire_msg
 
 class SSLConnection(Connection):
     description_format = "SSLConnection<host=%(host)s,port=%(port)s,db=%(db)s>"
