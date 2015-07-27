@@ -4,21 +4,14 @@ Created on Jul 27, 2015
 @author: paepcke
 '''
 import codecs
-import functools
-import signal
-import threading
-import time
 import unittest
 
-from redis_bus_python.bus_message import BusMessage
-from redis_bus_python.redis_bus import BusAdapter
 from redis_bus_python.redis_lib.connection import OneShotConnection, \
     ConnectionPool, Connection
-from redis_bus_python.test.performance_test_echo_server import \
-    PerformanceTesterEchoServer
+from redis_bus_python.test.test_harness_server import OnDemandPublisher
 
 
-TEST_ALL = False
+TEST_ALL = True
 
 class OneShotTester(unittest.TestCase):
 
@@ -123,7 +116,7 @@ class OneShotTester(unittest.TestCase):
         
         self.assertEqual('subscribe', self.conn.read_string())
         
-    #*******@unittest.skipIf(not TEST_ALL, 'Temporarily disabled')        
+    @unittest.skipIf(not TEST_ALL, 'Temporarily disabled')        
     def testParseResponse(self):
 
         # Parse a simple response to a subscribe:
@@ -141,7 +134,7 @@ class OneShotTester(unittest.TestCase):
         
         # Make the OnDemandPublisher thread send us this
         # message:
-        OneShotTester.answer_server.sendMessage()
+        OneShotTester.answer_server.sendMessage(OneShotTester.test_msg, OneShotTester.from_channel)
         parsed_resp = self.conn.parse_response()
         
         # Get the message that was sent back to us:
@@ -164,140 +157,6 @@ class OneShotTester(unittest.TestCase):
         rx_encoded[2] = chopped_rxed_body 
         
         self.assertEqual(expected, rx_encoded)
-        
-# --------------------------- Single Message Publisher -----------------
-
-class OnDemandPublisher(threading.Thread):
-    '''
-    Thread that receives messages, and asserts
-    that the received values are what was passed
-    into the thread's init method. Keeps listening
-    till stop() is called.
-    '''
-    
-    # Maximum time for no message to arrive before
-    # starting over counting messages:
-    MAX_IDLE_TIME = 5
-    
-    def __init__(self, beSynchronous=True):
-        threading.Thread.__init__(self)
-        
-        self.beSynchronous = beSynchronous
-        
-        self.testBus = BusAdapter()
-        
-        # Subscribe, and ensure that context is delivered
-        # with each message:
-        self.testBus.subscribeToTopic('test', 
-                                      deliveryCallback=functools.partial(self.messageReceiver)) 
-        self.interruptEvent = threading.Event()
-        self.numEchoed = 0
-        self.mostRecentRxTime = None
-        self.printedResetting = False
-        
-        self.outMsg = BusMessage(OneShotTester.test_msg, OneShotTester.from_channel)
-        # Not asked to send a message yet.
-        self.sendMsg = False
-        
-        signal.signal(signal.SIGINT, functools.partial(self.stop))
-        
-        self.done = False
-        
-    def sendMessage(self):
-        '''
-        Trigger interrupt, which will have the run() loop
-        send a standard message.
-        '''
-        self.sendMsg = True
-        self.interruptEvent.set()
-        
-    def messageReceiver(self, busMsg, context=None):
-        '''
-        Method that is called with each received message.
-        
-        :param busMsg: bus message object
-        :type busMsg: BusMessage
-        :param context: context Python structure, if subscribeToTopic() was
-            called with one.uu
-        :type context: <any>
-        '''
-        
-        self.mostRecentRxTime = time.time()
-        self.printedResetting = False
-        
-        if self.beSynchronous:
-            respMsg = self.testBus.makeResponseMsg(busMsg, busMsg.content)
-
-            # Publish a response:
-            self.testBus.publish(respMsg)
-            self.numEchoed += 1
-
-            #************
-            #print('Echoed one.')
-            #************
-
-            if self.numEchoed % 1000 == 0:
-                print('Echoed %d' % self.numEchoed)
-            
-    def resetEchoedCounter(self):
-        currTime = time.time()
-        
-        if self.mostRecentRxTime is None:
-            #**********
-            #printThreadTraces()
-            #sys.exit()
-            #**********
-            # Nothing received yet:
-            self.startTime = time.time()
-            self.startIdleTimer()
-            return
-        
-        if currTime - self.mostRecentRxTime <= PerformanceTesterEchoServer.MAX_IDLE_TIME:
-            # Received msgs during more recently than idle time:
-            self.startIdleTimer() 
-            return
-        
-        # Did not receive msgs within idle time:
-        self.printTiming()
-        if not self.printedResetting:
-            print('Resetting (echoed %d)' % self.numEchoed)
-            self.printedResetting = True
-        self.numEchoed = 0
-        self.startTime = time.time()
-        self.timer = self.startIdleTimer()
-
-    def startIdleTimer(self):
-        threading.Timer(PerformanceTesterEchoServer.MAX_IDLE_TIME, functools.partial(self.resetEchoedCounter)).start()
-
-    def stop(self):
-        self.done = True
-        self.interruptEvent.set()
-        
-    def printTiming(self, startTime=None):
-        currTime = time.time()
-        if startTime is None:
-            startTime = self.startTime
-            return
-        print('Echoed %d messages' % self.numEchoed)
-        if self.numEchoed == 0:
-            print ('No messages echoed.')
-        else:
-            timeElapsed = float(currTime) - float(self.startTime)
-            print('Msgs per second: %d' % (timeElapsed / self.numEchoed))
-            
-    def run(self):
-        while not self.done:
-            self.startTime = time.time()
-            self.startIdleTimer()
-            self.interruptEvent.wait()
-            if self.sendMsg:
-                self.testBus.publish(self.outMsg)
-                self.interruptEvent.clear()
-                self.sendMsg = False
-            continue
-        
-        self.testBus.unsubscribeFromTopic('test')
-        self.testBus.close()
         
     
 if __name__ == "__main__":
