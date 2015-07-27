@@ -103,24 +103,31 @@ class RedisPerformanceTester(object):
             
     def syncPublishing(self, numMsgs, msgLen, block=True):
 
+        sys.stdout.write('Run python src/redis_bus_python/test/sync_test_serve.py and hit ENTER...')
+        sys.stdin.readline()
+        
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
 
         busMsg = BusMessage(content=msg, topicName='test')
 
+
         startTime = time.time()
-        for serialNum in range(numMsgs):
-            try:
-                busMsg.id = serialNum
-                res = self.bus.publish(busMsg, sync=True, timeout=5, block=block) #@UnusedVariable
-            except SyncCallTimedOut:
-                #printThreadTraces()
-                raise
-                
-        endTime = time.time()
-        #************
-        print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
-        #************
-        self.printResult('Publishing %s synch msgs (block==%s): ' % (str(numMsgs), str(block)), startTime, endTime, numMsgs)
+        try:
+            for serialNum in range(numMsgs):
+                try:
+                    busMsg.id = serialNum
+                    res = self.bus.publish(busMsg, sync=True, timeout=5, block=block) #@UnusedVariable
+                except SyncCallTimedOut:
+                    #printThreadTraces()
+                    raise
+                    
+            endTime = time.time()
+            #************
+            print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
+            #************
+            self.printResult('Publishing %s synch msgs (block==%s): ' % (str(numMsgs), str(block)), startTime, endTime, numMsgs)
+        finally:
+            pass
         
         
     def rawIronPublish(self, numMsgs, msgLen, block=True):
@@ -212,7 +219,7 @@ class ReceptionTester(threading.Thread):
     till stop() is called.
     '''
     
-    def __init__(self, msgMd5=None, beSynchronous=False):
+    def __init__(self, msgMd5=None, beSynchronous=False, topic_to_wait_on='test'):
         threading.Thread.__init__(self, name='PerfTestReceptor')
         self.setDaemon(True)
         
@@ -222,7 +229,7 @@ class ReceptionTester(threading.Thread):
         
         # Subscribe, and ensure that context is delivered
         # with each message:
-        self.testBus.subscribeToTopic('test', 
+        self.testBus.subscribeToTopic(topic_to_wait_on, 
                                       deliveryCallback=functools.partial(self.messageReceiver), 
                                       context=msgMd5)
         self.eventForStopping = threading.Event()

@@ -41,7 +41,7 @@ class Connection(object):
     should be used by applications.
     '''
     
-    description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s,name=%(_name)s>"
+    description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s,name=%(name)s>"
 
     # Socket timeout when awaiting a response
     # from the Redis server:
@@ -124,11 +124,13 @@ class Connection(object):
             'host': self.host,
             'port': self.port,
             'db': self.db,
+            'name' : self._name
         }
         self._connect_callbacks = []
 
     def __repr__(self):
-        return self.description_format % self._description_args
+        return 'Connection<host=%s,port=%s,db=%s,name=%s>' % (self.host,self.port,self.db,self.name)
+        #return self.description_format % self._description_args
 
     def __del__(self):
         try:
@@ -150,7 +152,16 @@ class Connection(object):
     def clear_connect_callbacks(self):
         self._connect_callbacks = []
 
-    def connect(self):
+    def select(self, timeout=None):
+        if self._sock is None:
+            raise ValueError('Socket has not been initialized for this connection (%s)' % self.name)
+        if timeout is None and timeout > 0:
+            select([self._sock, [], []])
+        else:
+            select([self._sock], [], [], timeout)
+        
+
+    def connect(self, name=None):
         "Connects to the Redis server if not already connected"
         if self._sock:
             return
@@ -162,7 +173,7 @@ class Connection(object):
 
         self._sock = sock
         try:
-            self.on_connect()
+            self.on_connect(name=name)
         except RedisError:
             # clean up after any error in on_connect
             self.disconnect()
@@ -175,14 +186,16 @@ class Connection(object):
 
     def disconnect(self):
         self._disconnect()
+        self.name = None
 
-    def on_connect(self):
+    def on_connect(self, name=None):
+        self.name = name
         self._on_connect()
 
     def send_packed_command(self, command):
         "Send an already packed command to the Redis server"
         if not self._sock:
-            self.connect()
+            self.connect(name=command)
         try:
             if isinstance(command, str):
                 command = [command]
@@ -371,8 +384,9 @@ class ParsedConnection(Connection):
         super(ParsedConnection, self).__init__(**kwargs)
         self._parser = parser_class(socket_read_size=self.socket_read_size)
 
-    def on_connect(self):
+    def on_connect(self, name=None):
         "Initialize the connection, authenticate and select a database"
+        self.name = name
         self._parser.on_connect(self)
         self._on_connect()
 
@@ -404,6 +418,9 @@ class ParsedConnection(Connection):
         except:
             self.disconnect()
             raise
+
+    def read_subscription_cmd_status_return(self, subscription_command, channel):
+        return self._parser.read_subscription_cmd_status_return(subscription_command, channel)
 
     def read_response(self):
         "Read the response from a previously sent command"
@@ -801,9 +818,12 @@ class ConnectionPool(object):
         self.reset()
 
     def __repr__(self):
-        return "%s<%s>" % (
-            type(self).__name__,
-            self.connection_class.description_format % self.connection_kwargs,
+        # Make print name something like: ConnectionPool<ParsedConnection>s
+        class_name = type(self).__name__
+        connections_type = self.connection_class.__name__
+        return "%s<%s>s" % (
+            class_name,
+            connections_type,
         )
 
     def reset(self):
@@ -823,7 +843,7 @@ class ConnectionPool(object):
                 self.disconnect()
                 self.reset()
 
-    def get_connection(self, command_name, *keys, **options):
+    def get_connection(self, *keys, **options):
         '''
         Get a connection from the pool. If a free connection
         is expecting an orphaned return value from, e.g. a prior
@@ -885,7 +905,6 @@ class ConnectionPool(object):
             self._available_connections.extend(connectionsOrphanWaiting)
 
         self._in_use_connections.add(connection)
-        connection.name = command_name
         return connection
 
 
@@ -980,7 +999,7 @@ class BlockingConnectionPool(ConnectionPool):
         self._connections.append(connection)
         return connection
 
-    def get_connection(self, command_name, *keys, **options):
+    def get_connection(self, *keys, **options):
         """
         Get a connection, blocking for ``self.timeout`` until a connection
         is available from the pool.

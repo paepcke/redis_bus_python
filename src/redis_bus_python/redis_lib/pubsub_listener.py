@@ -33,6 +33,9 @@ class PubSubListener(threading.Thread):
     # of a subscribe or unsubscribe command:
     CMD_ACK_TIMEOUT = 1.0  # seconds
     
+    DO_BLOCK   = True
+    DONT_BLOCK = False
+    
     def __init__(self, connection_pool, oneshot_connection_pool, host='localhost', port=6379, 
                  shard_hint=None, ignore_subscribe_messages=False):
         '''
@@ -61,10 +64,10 @@ class PubSubListener(threading.Thread):
         self.done = False
         self.paused = False
         self.connection = None
-       
+        
         # we need to know the encoding options for this connection in order
         # to lookup channel and pattern names for callback handlers.
-        conn = connection_pool.get_connection('InMsgs', shard_hint)
+        conn = connection_pool.get_connection('shard_hint')
         try:
             self.encoding = conn.encoding
             self.encoding_errors = conn.encoding_errors
@@ -75,8 +78,8 @@ class PubSubListener(threading.Thread):
         
         # Create a connection for incoming messages;
         # it will be monitored by the run() method:
-        self.connection = self.connection_pool.get_connection('PubSubInMsgs',self.shard_hint)
-        self.connection.connect()
+        self.connection = self.connection_pool.get_connection(self.shard_hint)
+        self.connection.connect(name='PubSubInMsgs')
 
         # Start listening on that connection:        
         self.start()
@@ -114,13 +117,17 @@ class PubSubListener(threading.Thread):
                     # it instead:
                     time.sleep(1)
                     continue
+
+                # Finally, act on the incoming message:
                 # We don't do anything with the response,
                 # because this implementation only supports
                 # handler-based operation: the call to
                 # handle_message() will call registered
                 # handler methods/functions. The assigment
                 # stays for setting breakpoints during debugging:
+                
                 response = self.handle_message(self.parse_response(block=True)) #@UnusedVariable
+                
         except Exception as e:
             # If close() was called by the owner of this
             # client, the closing of subsystems eventually
@@ -193,22 +200,46 @@ class PubSubListener(threading.Thread):
         "Indicates if there are subscriptions to any channels or patterns"
         return bool(self.channels or self.patterns)
 
-    def execute_command(self, *args, **kwargs):
+    def execute_command(self, *args):
         '''
-        Execute a publish/subscribe command. Returns the
-        connection on which the request went to the server.
-        The caller can then choose to retrieve the response,
-        or not.
+        Execute a publish/subscribe command. PUBLISH()
+        and other types of commands are processed via
+        the client.py's execute_command, not this one.
+        The server status response is picked up via
+        the run() method and handle_message().
+        
+        NOTE: For single-channel calls it is faster to use
+        the Connection instance's read_subscription_cmd_status_return()
+        method, which also waits for the response.
+        
+        :param args: first arg must be {SUBSCRIBE | UNSUBSCRIBE | PSUBSCRIBE | PUNSUBSCRIBE}
+            The following args are channels or patterns to subscribe to.
+        :type args: string
+        :return: None
+        :rtype: None type 
         '''
-
-        #***************
-        #*****conn = self.oneshot_connection_pool.get_connection('subscribe')
         conn = self.connection
-        #***************
+        if conn is None:
+            self.connection = self.connection_pool.get_connection()
+            conn = self.connection
+        # The callable to _execute is the connection's send_command:
         self._execute(conn, conn.send_command, *args)
-        return conn
 
     def _execute(self, connection, command, *args):
+        '''
+        Workhorse for execute_command(). given a connection
+        instance, a callable, and arguments, this method
+        invokes the callable with args. If the call fails,
+        disconnects, reconnects, and tries one more time.
+        Example for a command value is connection.send_command.
+        
+        :param connection: connection on which command is to be delivered to the server
+        :type connection: Connection
+        :param command: callable to be invoked with the arguments
+        :type command: callable
+        :return: result of callable
+        :rtype: <any>
+        '''
         try:
             return command(*args)
         except (ConnectionError, TimeoutError) as e:
@@ -251,6 +282,10 @@ class PubSubListener(threading.Thread):
         pattern's callable will be invoked automatically when a message is
         received on that pattern.
         """
+        
+        if self.connection is None:
+            self.connection = self.connection_pool.get_connection()
+        
         if args:
             args = list_or_args(args[0], args[1:])
         new_patterns = {}
@@ -304,7 +339,11 @@ class PubSubListener(threading.Thread):
             # for the reconnection.):
             
             for pattern in args:
-                del self.patterns[pattern]
+                try:
+                    del self.patterns[pattern]
+                except KeyError:
+                    # Don't get tripped up by unsubscribes that aren't subscribed:
+                    pass
         finally:
             self.patterns.release()
             
@@ -330,17 +369,15 @@ class PubSubListener(threading.Thread):
         self.channels.acquire()
 
         try:
-            # Send subscribe cmd to server
-            conn = self.execute_command('SUBSCRIBE', *iterkeys(new_channels))
+            if len(new_channels) == 1:
+                # Go the fast way through the 
+                # parser to the socket for speed:
+                self.connection.read_subscription_cmd_status_return('SUBSCRIBE',new_channels.keys()[0])
+                
+            else:            
+                # Send subscribe cmd to server
+                self.execute_command('SUBSCRIBE', *iterkeys(new_channels))
             
-            try:
-                #***************
-                #****ack = conn.read_string()
-                ack = conn.read_response()
-                #***************
-            except TimeoutError as e:
-                raise TimeoutError("Cannot subscribe to %s: %s" % (args if args else '' + str(kwargs.keys()) if len(kwargs) > 0 else '', `e`))
-    
             # Now update the self.channels data structure;
             # acquire the access lock.
             # (update the channels dict AFTER we send the command. we don't want to
@@ -379,7 +416,11 @@ class PubSubListener(threading.Thread):
             # for the reconnection.):
             
             for channel in args:
-                del self.channels[channel]
+                try:
+                    del self.channels[channel]
+                except KeyError:
+                    # Don't get tripped up by unsuscribes that aren't subscribed
+                    pass
         finally:
             self.channels.release()
             
@@ -404,9 +445,6 @@ class PubSubListener(threading.Thread):
         with a message handler, the handler is invoked instead of a parsed
         message being returned.
         """
-        
-        if not isinstance(response, basestring):
-            return response
         
         message_type = nativestr(response[0])
         if message_type == 'pmessage':

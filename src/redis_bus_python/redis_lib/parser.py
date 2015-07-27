@@ -5,10 +5,12 @@ Created on Jul 24, 2015
 '''
 
 from redis_bus_python.redis_lib._compat import byte_to_chr, nativestr
-#@UnusedVariable
-from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
-    TimeoutError, BusyLoadingError, ResponseError, InvalidResponse, \
-    AuthenticationError, NoScriptError, ExecAbortError, ReadOnlyError
+
+from redis_bus_python.redis_lib.exceptions import AuthenticationError, \
+    NoScriptError, ExecAbortError, RedisError, TimeoutError, BusyLoadingError, \
+    ResponseError, ReadOnlyError #@UnusedImport
+from redis_bus_python.redis_lib.exceptions import ConnectionError #@UnusedImport
+from redis_bus_python.redis_lib.exceptions import InvalidResponse #@UnusedImport
 from redis_bus_python.redis_lib.socket_reader import SocketLineReader
 
 
@@ -112,20 +114,40 @@ class PythonParser(BaseParser):
         except ValueError:
             raise InvalidResponse("Expecting integer response but received '%s'" % response)
 
+    def read_subscription_cmd_status_return(self, subscription_command, channel):
+        '''
+        Given a subscription related command, send the command, parse the status response,
+        and return the number of channels caller is subscribed to after
+        the command was processed on the server.N
+        
+        :param subscription_command: the command to which a status response is expected:
+            {subsribe | unsubscribe | psubscribe | punsubscribe}
+        :type subscription_command: string
+        :return: the number of channels caller is subscribed to after 
+            the subscription command.
+        :rtype: int
+        :raises ResponseError: if data read from the server is not 
+            of proper format.
+        :raises TimeoutError: if server does not respond in time.
+        '''
+        
+        return self._buffer.read_subscription_cmd_status_return(subscription_command, channel)
+        
+
     def read_response(self):
         '''
         Reads one line from the wire, and interprets it.
         Example: the acknowledgment to an unsubscribe
-        from topic myTopic on the wire looks like this:
+        from channel myChannel on the wire looks like this:
         
-             *3\r\n$11\r\nUNSUBSCRIBE\r\n$7\r\nmyTopic\r\n:1\r\n'
+             *3\r\n$11\r\nUNSUBSCRIBE\r\n$7\r\nmyChannel\r\n:1\r\n'
              
         *3    # three items to follow
         $11   # string of 11 chars
         UNSUBSCRIBE
         $7    # string of 7 chars
-        myTopic
-        :1    # one topic subscribed to now
+        myChannel
+        :1    # one channel subscribed to now
         
         Each line will cause a recursive call to this method
         (see elif byte == '*' below).

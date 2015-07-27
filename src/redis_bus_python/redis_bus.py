@@ -190,7 +190,7 @@ class BusAdapter(object):
 
         # All incoming messages on this topic will be
         # delivered through the msgQueueForTopic to the
-        # delivery thread, which will read from thise
+        # delivery thread, which will read from this
         # queue:
         
         self.topicWaiterThread.addTopic(topicName, msgQueueForTopic)
