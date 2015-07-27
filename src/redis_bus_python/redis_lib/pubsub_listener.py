@@ -471,50 +471,31 @@ class PubSubListener(threading.Thread):
         unsubscribe_cmd = conn.pack_subscription_command('UNSUBSCRIBE', from_channel)
             
         conn.write_socket(subscribe_cmd)
+        
         # Read and discard the returned status.
         # The method will throw a timeout error if the
-        # server does not send the status: 
+        # server does not send the status. The
+        # status to a subscribe consists of six lines,
+        # such as: 
+        #       '*3\r\n$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'
 
-        conn.read_socket(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
-        # Ensure we have all of the status:
-        while conn.read_socket(block=False) is not None:
-            pass
+        for _ in range(6):
+            conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
         
         # Publish the request:
         self.conn.write_socket(publish_cmd)
         
-        # Wait for the (at least) initial service's computed response;
-        # the read_socket() method will throw a timeout if necessary:
-        firstBatch = self.conn.read_socket(block=True, timeout=timeout)
-        
-        # Make sure we don't have more coming from the server:
-        more_data_found = True
-        responsePieces = [] 
-        while more_data_found:
-            more_data = self.conn.read_socket(block=False)
-            if more_data is not None:
-                responsePieces.append(more_data)
-            else:
-                more_data_found = False
-        
-                
-            
-                
-        
-        
-        
+        response_arr = self.conn.parse_response(block=True, timeout=timeout)
         
         conn.write_socket(unsubscribe_cmd)
-        # Read and discard the returned status.
-        # The method will throw a timeout error if the
-        # server does not send the status: 
 
-        conn.read_socket(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
-        # Ensure we have all of the status:
-        while conn.read_socket(block=False) is not None:
-            pass
+        # Read and discard the returned status.
+        # Same expected return format as the subscribe above:
+
+        for _ in range(6):
+            conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
         
-        
+        return response_arr
 
     def get_message(self, ignore_subscribe_messages=False, timeout=0):
         """

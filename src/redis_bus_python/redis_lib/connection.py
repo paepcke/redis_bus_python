@@ -19,7 +19,7 @@ from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
     TimeoutError, BusyLoadingError, ResponseError, InvalidResponse, \
     AuthenticationError, NoScriptError, ExecAbortError, ReadOnlyError #@UnusedImport
 from redis_bus_python.redis_lib.parser import PythonParser, SYM_EMPTY, SYM_STAR, \
-    SYM_CRLF, SYM_DOLLAR
+    SYM_CRLF, SYM_DOLLAR, BaseParser
 
 
 #@UnusedImport
@@ -51,7 +51,7 @@ class Connection(object):
     # Redis protocol start of a string:
     # 2 elements to follow (*2\r\n);
     # length indicator '$':
-    WIRE_PROTOCOL_STR_START_PATTERN = re.compile(r'[*][0-9]*\r\n[$]')
+    WIRE_PROTOCOL_STR_START_PATTERN = re.compile(r'[$]')
     
     # Integer string search pattern:
     INT_PATTERN = re.compile("[0-9]*")
@@ -450,18 +450,14 @@ class OneShotConnection(Connection):
     
     '''
 
-    # Time to allow a service to compute a result,
-    # and return it. This timeout is used as  
-    # default in read_socket:
-    
-    SERVICE_RESPONSE_TIMEOUT = 2.0 # sec
-
-
-    
     def __init__(self, host='localhost', port=6379, **kwargs):
         super(OneShotConnection, self).__init__(host=host, port=port, **kwargs)
         
         self.returnedResult = None
+        
+        # Get a basic parser that knows nothing about connections
+        # and sockets:
+        self._parser = BaseParser()
         
         # When more bytes have been pulled from the server
         # than were requested in one of the read_xxx() methods
@@ -469,7 +465,8 @@ class OneShotConnection(Connection):
         self.read_bytes = None
         
         # Similarly, readline() remembers lines
-        self.read_lines = []
+        self.lines_read = []
+        self.remnant = None
         
         self.connect()
         
@@ -489,69 +486,132 @@ class OneShotConnection(Connection):
         :raises TimeoutError: if no data arrives from server in time. 
         '''
         
-        rawRes = self.read_socket(block=block, timeout=timeout)
+        rawRes = self.readline(block=block, timeout=timeout)
         try:
             intRes = int(rawRes[1:].strip())
         except (ValueError, IndexError):
             raise ResponseError("Server did not return an int; returned '%s'" % intRes)
         return intRes
     
-    def readline(self, block=True, timeout=None):
-
-            if len(self.read_lines) > 0:
-                return self.read_lines.pop(0)
-            while True:
-                try:
-                    # Wait for incoming messages:
-                    if block:
-                        if timeout is None:
-                            # Block forever:
-                            (readReady, writeReady, errReady) = select([self._sock],[],[]) #@UnusedVariable
-                        else:
-                            # Block, but with timeout:
-                            (readReady, writeReady, errReady) = select([self._sock],[],[], timeout) #@UnusedVariable
-                    else:
-                        # Just poll:
-                        (readReady, writeReady, errReady) = select([self._sock],[],[], 0) #@UnusedVariable
-                    if len(readReady) == 0:
-                        # Timeout out:
-                        raise TimeoutError('Full line was not received from server within %f2.2 seconds' % timeout)
-                    
-                    # Something arrived on the socket.                    
-                    data = self._sock.recv(self.socket_read_size)
-                    # An empty string indicates the server shutdown the socket
-                    if isinstance(data, bytes) and len(data) == 0:
-                        raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
-                    
-                    # If over-read before, prepend that remnant:
-                    if self.remnant is not None:
-                        data = self.remnant + data
-                        self.remnant = None
-                except socket.error as e:
-                    if e.args[0] == errno.EAGAIN:
-                        time.sleep(0.3)
-                        continue
-                    else:
-                        raise
-                    
-                if SYM_CRLF in data:
-                    
-                    lines = data.split(SYM_CRLF)
-                                        
-                    # str.split() adds an empty str if the
-                    # str ends in the split symbol. If str does
-                    # not end in the split symbol, the resulting
-                    # array has the unfinished fragment at the end.
-                    
-                    for line in lines[:-1]:
-                        self.read_lines.append(line)
-                        
-                    # Final bytes may or may not have their
-                    # closing SYM_CRLF yet:
-                    if not data.endswith(SYM_CRLF):
-                        # Have a partial line at the end:
-                        self.remnant = lines[-1]
+    def read(self, num_bytes, block=True, timeout=None):
+        bytes_left_to_read = num_bytes
+        
+        while bytes_left_to_read > 0:
+            if len(self.lines_read) > 0:
+                # There already are lines that were read earlier.
+                # read those first:
+                
+                result = ''
+                for line in self.lines_read:
+                    if len(line) > bytes_left_to_read:
+                        result = line[:bytes_left_to_read]
+                        # Remove the read bytes from the line:
+                        self.lines_read = self.lines_read[bytes_left_to_read:]
+                        return result
+                    elif len(line) == bytes_left_to_read:
+                        return self.lines_read.pop(0)
+                    elif len(line) < bytes_left_to_read:
+                        # Need to use this line, plus more:
+                        line = self.lines_read.pop(0)
+                        result += line
+                        bytes_left_to_read -= len(line)
+                        continue 
+                if self.remnant is not None:
+                    if len(self.remnant) <= bytes_left_to_read:
+                        result += self.remnant
+                        if len(self.remnant) == bytes_left_to_read:
+                            self.remnant = None
+                            return result
+                        else: # Remnant > than what we still need
+                            len_remnant_part_used = bytes_left_to_read
+                            result += self.remnant[:bytes_left_to_read]
+                            self.remnant = self.remnant[bytes_left_to_read:]
+                            bytes_left_to_read -= len_remnant_part_used 
+                            return result
+        
+            # Either no lines had previously been read, or
+            # not enough data was in previously read lines
+            # and self.remnant:
+            next_line = self.readline(block=block, timeout=timeout)
+            self.lines_read = [next_line] + self.lines_read
+         
+        
     
+    def readline(self, block=True, timeout=None):
+        '''
+        Return one line from the socket, without the closing
+        CR/LF, or raise a TimeoutError exception. If socket
+        yields more than one line, the remaining lines are
+        stored in the self.lines_read array. If a partial 
+        line is at the end of the socket, that is stored
+        in self.remnant, and prepended to subsequent
+        readline() results.
+        
+        :param block: whether or not to wait for data
+        :type block: boolean
+        :param timeout: (fractional) seconds before timing out
+        :type timeout: float
+        :return: a string corresponding to one \r\n-delimited element
+            of the wire protocol.
+        :rtype: string
+        :raise TimeoutError if no data from server in time.
+        :raise socket.error if socket problem
+        '''
+
+        if len(self.lines_read) > 0:
+            return self.lines_read.pop(0)
+        while True:
+            try:
+                # Wait for incoming messages:
+                if block:
+                    if timeout is None:
+                        # Block forever:
+                        (readReady, writeReady, errReady) = select([self._sock],[],[]) #@UnusedVariable
+                    else:
+                        # Block, but with timeout:
+                        (readReady, writeReady, errReady) = select([self._sock],[],[], timeout) #@UnusedVariable
+                else:
+                    # Just poll:
+                    (readReady, writeReady, errReady) = select([self._sock],[],[], 0) #@UnusedVariable
+                    return None
+                
+                # Something arrived on the socket.                    
+                data = self._sock.recv(self.socket_read_size)
+                # An empty string indicates the server shutdown the socket
+                if isinstance(data, bytes) and len(data) == 0:
+                    raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
+                
+                # If over-read before, prepend that remnant:
+                if self.remnant is not None:
+                    data = self.remnant + data
+                    self.remnant = None
+            except socket.error as e:
+                if e.args[0] == errno.EAGAIN:
+                    time.sleep(0.3)
+                    continue
+                else:
+                    raise
+                
+            if SYM_CRLF in data:
+                
+                lines = data.split(SYM_CRLF)
+                                    
+                # str.split() adds an empty str if the
+                # str ends in the split symbol. If str does
+                # not end in the split symbol, the resulting
+                # array has the unfinished fragment at the end.
+                
+                for line in lines[:-1]:
+                    self.lines_read.append(line)
+                    
+                # Final bytes may or may not have their
+                # closing SYM_CRLF yet:
+                if not data.endswith(SYM_CRLF):
+                    # Have a partial line at the end:
+                    self.remnant = lines[-1]
+                
+                return self.lines_read.pop(0)
+
     def read_string(self, block=True, timeout=None):
         '''
         Returns a Redis wire protocol encoded string from the 
@@ -571,14 +631,19 @@ class OneShotConnection(Connection):
         :raises TimeoutError: if no data arrives from server in time. 
         '''
 
-        rawRes = self.read_socket(block=block, timeout=timeout, buf_size=2048)
+        # Strings start with a +, followed by a string, followed
+        # by a CR/LF, or with a length, like this:
+        #      '$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'\r\n
+        
+        # Get the length or simple-string
+        rawRes = self.readline(block=block, timeout=timeout)
 
         # Is it a 'simple string', i.e. "+<str>"?
         if rawRes[0] == '+':
             return(rawRes[1:-len(SYM_CRLF)])
         
-        # Raw result must start with: *<int>\r\n, followed by length indicator '$':
-        # like this: '*3\r\n$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'\r\n
+        # Raw result must start with length indicator '$':
+        # like this: '$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'\r\n
 
         preamble_match = Connection.WIRE_PROTOCOL_STR_START_PATTERN.match(rawRes)         
         if preamble_match is None:
@@ -609,71 +674,32 @@ class OneShotConnection(Connection):
         return res
 
     def write_socket(self, msg):
+        '''
+        Write an arbitrary string to this OneShotConnection's socket.
+        
+        :param msg: message to write
+        :type msg: string
+        :raises: socket.error if something bad happens in the socket system call
+        '''
         self._sock.sendall(msg)
-
-    def read_nbytes_from_socket(self, num_bytes_to_read, timeout=None):
-        '''
-        Given a number of bytes to read from this connection's
-        socket, return a string with of that length, or raise
-        TimeoutError.
         
-        :param num_bytes_to_read: number of bytes to read from socket
-        :type num_bytes_to_read: int
-        :param timeout: (fractional) seconds before timing out and throwing an exception
-        :type timeout: float
-        :return: string of length num_bytes_to_read
-        :rtype: string
-        :raise TimeoutError: if not enough bytes are available on the 
-            socket within timeout
+    def parse_response(self, response=None):
         '''
-
-        # Make sure we don't have more coming from the server:
-        all_data_found = False
-        response_pieces = []
-        num_bytes_pulled = 0
-        while not all_data_found:
-            data = self.conn.read_socket(block=True, timeout=timeout)
-            num_bytes_pulled += len(data)
-            response_pieces.append(response_pieces)
-            if num_bytes_pulled >= num_bytes_to_read:
-                all_data_found = True
-        res = ''.join(response_pieces)
-        return res
+        Obtain a server stream of bytes directly
+        from the socket, and parse it until one
+        completely parsed Redis structure is obtained.
+        Any additional bytes read from the buffer are
+        safed in self.lines_read and self.remnant.
         
-
-    def read_socket(self, block=True, timeout=None, buf_size=1024):
+        :param response: a previously obtained line of Redis wire protocol.
+            If none, readline() is called.
+        :type response: string
+        :return: an array of parsed Redis
+        :rtype: [string]
         '''
-        Read from the socket, and return the result
+        # Parse a response
+        return self._parser.parse_response(response, self)
         
-        :param block: if True, block till arrival of the data
-        :type block: bool 
-        :param timeout: if blocking, timeout
-        :type timeout: float
-        :param buf_size: size of buffer for socket to use.
-        :type buf_size: int
-        :return: string that arrived on socket
-        :rtype: string
-        :raises TimeoutError: if no data arrives from server in time.
-        '''
-
-        if block:
-            # Hang till something arrives from Redis server:
-            try:
-                rawRes = self._sock.recv(buf_size)
-            except socket.timeout:
-                raise TimeoutError('Server did not return result within %2.2f sec' % self._sock.gettimeout())
-        else:
-            # Anything available on the socket?
-            (rlist, wlist, xlist) = select.select([self._sock], [], [], timeout) #@UnusedVariable
-            if len(rlist) == 0: 
-                return None
-            else:
-                try:
-                    rawRes = self._sock.recv(buf_size)
-                except socket.timeout:
-                    raise TimeoutError("Redis server did not produce a response within %2.2f seconds" % timeout)                    
-
-        return rawRes
 
     def pack_publish_command(self, channel, msg):
         '''

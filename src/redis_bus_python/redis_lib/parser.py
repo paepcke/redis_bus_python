@@ -47,7 +47,7 @@ class BaseParser(object):
         'NOSCRIPT': NoScriptError,
         'READONLY': ReadOnlyError,
     }
-
+    
     def parse_error(self, response):
         "Parse an error response"
         error_code = response.split(' ')[0]
@@ -55,6 +55,81 @@ class BaseParser(object):
             response = response[len(error_code) + 1:]
             return self.EXCEPTION_CLASSES[error_code](response)
         return ResponseError(response)
+
+    def parse_response(self, response=None, socket_buffer=None, block=True, timeout=None):
+        '''
+        Given a full line of Redis wire protocol,
+        parse that line, requesting additional lines if
+        needed by requesting them from the passed-in
+        socket_buffer. That object must provide a 
+        readline(block, timeout) method, else error.
+        
+        Examples for a response are:
+            - *2
+            - subscribe
+            - $9
+            
+        This method is called recursively.
+        
+        :param response: one line of the wire protocol 
+        :type response: string
+        :param socket_buffer: object that provides a readline(block, timeout) method
+        :type socket_buffer: {SocketLineReader | OneShotConnection | ...}
+        :returns: parsed response
+        :rtype: [string]
+        :raise TimeoutError
+        '''
+
+        if response is None:
+            response = socket_buffer.readline(block=block, timeout=timeout)
+            
+        byte, response = byte_to_chr(response[0]), response[1:]
+
+        if byte not in ('-', '+', ':', '$', '*'):
+            raise InvalidResponse("Protocol Error: %s, %s" %
+                                  (str(byte), str(response)))
+
+        # server returned an error
+        if byte == '-':
+            response = nativestr(response)
+            error = self.parse_error(response)
+            # if the error is a ConnectionError, raise immediately so the user
+            # is notified
+            if isinstance(error, ConnectionError):
+                raise error
+            # otherwise, we're dealing with a ResponseError that might belong
+            # inside a pipeline response. the connection's read_response()
+            # and/or the pipeline's execute() will raise this error if
+            # necessary, so just return the exception instance here.
+            return error
+        # simple-string: response holds result:
+        elif byte == '+':
+            pass
+        # int value
+        elif byte == ':':
+            response = long(response)
+            
+        # bulk response
+        elif byte == '$':
+            length = int(response)
+            if length == -1:
+                # Null string:
+                return None
+            response = self._buffer.read(length)
+                        
+        # multi-bulk response
+        elif byte == '*':
+            length = int(response)
+            if length == -1:
+                return None
+            response = [self.parse_response(block=block, timeout=timeout) for _ in xrange(length)]
+        if isinstance(response, bytes) and self.encoding:
+            response = response.decode(self.encoding)
+        #***********
+        #print('Response: %s' % byte + '|' + str(response))
+        #***********
+                
+        return response
 
 class PythonParser(BaseParser):
     "Plain Python parsing class"
@@ -134,7 +209,7 @@ class PythonParser(BaseParser):
         return self._buffer.read_subscription_cmd_status_return(subscription_command, channel)
         
 
-    def read_response(self):
+    def read_response(self, socket_buffer=None):
         '''
         Reads one line from the wire, and interprets it.
         Example: the acknowledgment to an unsubscribe
@@ -168,54 +243,13 @@ class PythonParser(BaseParser):
         :return: response string
         :rtype: string
         '''
-        response = self._buffer.readline()
+        
+        if socket_buffer is None:
+            socket_buffer = self._buffer
+        response = socket_buffer.readline()
+        
         if not response:
             raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
 
-        byte, response = byte_to_chr(response[0]), response[1:]
+        return self.parse_response(response)
 
-        if byte not in ('-', '+', ':', '$', '*'):
-            raise InvalidResponse("Protocol Error: %s, %s" %
-                                  (str(byte), str(response)))
-
-        # server returned an error
-        if byte == '-':
-            response = nativestr(response)
-            error = self.parse_error(response)
-            # if the error is a ConnectionError, raise immediately so the user
-            # is notified
-            if isinstance(error, ConnectionError):
-                raise error
-            # otherwise, we're dealing with a ResponseError that might belong
-            # inside a pipeline response. the connection's read_response()
-            # and/or the pipeline's execute() will raise this error if
-            # necessary, so just return the exception instance here.
-            return error
-        # simple-string: response holds result:
-        elif byte == '+':
-            pass
-        # int value
-        elif byte == ':':
-            response = long(response)
-            
-        # bulk response
-        elif byte == '$':
-            length = int(response)
-            if length == -1:
-                # Null string:
-                return None
-            response = self._buffer.read(length)
-                        
-        # multi-bulk response
-        elif byte == '*':
-            length = int(response)
-            if length == -1:
-                return None
-            response = [self.read_response() for _ in xrange(length)]
-        if isinstance(response, bytes) and self.encoding:
-            response = response.decode(self.encoding)
-        #***********
-        #print('Response: %s' % byte + '|' + str(response))
-        #***********
-                
-        return response
