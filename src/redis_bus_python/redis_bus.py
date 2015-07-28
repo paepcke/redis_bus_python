@@ -24,8 +24,9 @@ import time
 import types
 
 from bus_message import BusMessage
-from redis_bus_python.topic_waiter import _TopicWaiter
+from redis_bus_python import redis_lib
 from schoolbus_exceptions import SyncCallTimedOut
+
 
 class BusAdapter(object):
     '''
@@ -46,6 +47,7 @@ class BusAdapter(object):
     '''
     
     _DO_BLOCK = True
+    
 
     def __init__(self, host='localhost', port=6379, db=0):
         '''
@@ -54,17 +56,15 @@ class BusAdapter(object):
 
         self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
-        self.topicWaiterThread = _TopicWaiter(self, host=host, port=port, db=db, threadName='TopicWaiterThread')
         
-        #***********
-        #self.topicWaiterThread.start()
-        #***********        
+        self.rserver =  redis_lib.StrictRedis(host=host, port=port, db=db)
+        self.pub_sub = self.rserver.pubsub()
         
     def publish(self, busMessage, sync=False, timeout=None, block=True, auth=None):
         '''
         Main method for publishing a message. 
         If you are publishing a response to a synchronous call, set 
-        the topicName in the BusMessage instance to self.get(responseTopic(incoming-bus-msg))
+        the topicName in the BusMessage instance to self.get_responseTopic(incoming-bus-msg))
         
         :param busMessage: A BusMessage object.
         :type busMessage: BusMessage
@@ -80,6 +80,10 @@ class BusAdapter(object):
         :type block: bool
         :param auth: any authentication to be included in the bus message.
         :type auth: String
+        :returns: if sync is False, returns the number of recipients of the publication.
+            else returns the server's result.
+        :raise TimeoutError if server does not respond in time
+        :raise socket.error if low level communication error occurs
         '''
         
         if not isinstance(busMessage, BusMessage):
@@ -104,97 +108,95 @@ class BusAdapter(object):
 
         # If synchronous operation requested, wait for response:
         if sync:
-            
-            # Before publishing the request, must prepare for 
-            # a function that will be invoked with the result.
-            
-            # Queue through which the thread that waits for
-            # the result will deliver the result once it arrives:
-            resultDeliveryQueue = Queue.Queue()
-            
             returnTopic = self.getResponseTopic(busMessage)
-            
-            # Create a temporary topic for use just
-            # the return result; provide the result queue
-            # to the waiting handler as context for it to know where
-            # to put the result value:
-
-            self.subscribeToTopic(returnTopic,
-                                  deliveryCallback=self.resultDeliveryFunc, 
-                                  context=resultDeliveryQueue)
-            try:
-
-                # Finally: post the request...; 
-                numRecipients = self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
-                
-                # And wait for the result:
-                try:
-                    res = resultDeliveryQueue.get(BusAdapter._DO_BLOCK, timeout)
-                    
-                except Queue.Empty:
-                    raise SyncCallTimedOut("Synchronous publish to topic %s timed out before result was returned." % topicName)
-                    
-                return res
-            
-            finally:
-                # Make sure the temporary topic used for returning the
-                # result is always left without a subscription so that
-                # Redis will destroy it:
-                self.unsubscribeFromTopic(returnTopic, block=False)
-            
+            # Post the request, and get the response in one command:
+            res = self.pub_sub.pub_round_trip(self, topicName, json.dumps(msgDict), returnTopic, timeout) 
+            return res
         else:
             # Not a synchronous call; just publish the request:
             numRecipients = self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
             return numRecipients
           
-    def subscribeToTopic(self, topicName, deliveryCallback=None, context=None):
+    def subscribeToTopic(self, topicIdentifier, deliveryCallable, threaded=True, context=None):
         '''
-        For convenience, a deliveryCallback function may be passed,
-        saving a subsequent call to addTopicListener(). See addTopicListener()
-        for details.
+        Subscribe to a topic or topic name pattern, specifying how incoming messages on the 
+        topic are to be delivered. Two delivery options: if threaded is True then
+        this method will spin off a new thread that listens on a Queue.Queue to which
+        incoming messages are delivered. The thread will call the deliveryCallable with
+        a BusMessage object.
+
+        This is the safest method in that the underlying communications are not
+        held up by your message handler. 
         
-        If deliveryCallback is absent or None, then method _deliverResult()
-        in this class will be used. That method is intended to be a 
+        The second receiving mechanism is to set threaded to False. In that
+        case your deliveryCallable will be called directly by the underlying 
+        communication mechanism, passing a BusMessage instance. This method 
+        calls your handler faster, but while your handler has control, the 
+        underlying communication mechanism cannot process other messages.
+        
+        If deliveryCallback None, then method _deliverResult() will be called
+        when a message arrives. That method is intended to be a 
         placeholder with no side effects.
         
         The context is any object or structure that is
-        meaningful to the deliveryFunc. This could be the instance
+        meaningful to the delivery callback. This could be the instance
         of an application on which the deliveryFunc can call
-        methods, or an Event object that the deliveryFunc will set()        
+        methods, or an Event object that the deliveryFunc will set()
+        when a message has been processed.        
         
         It is a no-op to call this method multiple times for the
-        same topic.
+        same topic or topic pattern.
+        
+        The topicIdentifier may be a string, in which case messages matching that
+        string exactly will be delivered. The parameter may instead be a Pattern
+        instance obtained via re.compile(<(raw)str>). In this case all topics
+        matching the pattern are delivered.
                  
-        :param topicName: official name of topic to listen for.
-        :type topicName: string
-        :param deliveryCallback: a function that takes two args: a topic
-            name, and a topic theContent string.
-        :type deliveryCallback: function
+        :param topicIdentifier: name or pattern of topic(s) to listen for.
+        :type topicIdentifier: {string | Pattern}
+        :param deliveryCallable: a callable that takes a BusMessage instance 
+        :type deliveryCallable: callable
+        :param threaded: if True, messages are delivered through a thread via a queue.
+            The thread invokes deliveryCallable
+        :type threaded: boolean
         :param context: any stucture that is meaningful to the callback function
         :type context: <any>
         '''
         
-        if deliveryCallback is None:
-            deliveryCallback = self.resultCallback
+        if deliveryCallable is None:
+            deliveryCallable = self.resultCallback
+        elif type(deliveryCallable) != types.FunctionType and type(deliveryCallable) != functools.partial:
+            raise ValueError("Parameter deliveryCallback must be a function, was of type %s" % type(deliveryCallable))            
+
+        try:
+            pattern_str = topicIdentifier.pattern
+        except AttributeError:
+            pattern_str = None
             
-        if type(deliveryCallback) != types.FunctionType and type(deliveryCallback) != functools.partial:
-            raise ValueError("Parameter deliveryCallback must be a function, was of type %s" % type(deliveryCallback))
+        if threaded:
+            delivery_queue = Queue.Queue()
+            # Spin off a thread that will listen on the queue:
+            deliveryThread = DeliveryThread(pattern_str if pattern_str is not None else topicIdentifier, 
+                                            delivery_queue, 
+                                            deliveryCallable, 
+                                            context)
+            # Remember that we have another thread:            
+            self.topicThreads[pattern_str if pattern_str is not None else topicIdentifier] = deliveryThread
+            deliveryThread.start()
+        else:
+            delivery_queue = None
 
-        msgQueueForTopic = Queue.Queue()
-        
-        # Spin off a thread that will run the delivery function;
-        # that function is expected to take a delivery queue:
-        
-        deliveryThread = DeliveryThread(topicName, msgQueueForTopic, deliveryCallback, context)
-        self.topicThreads[topicName] = deliveryThread
-
-        # All incoming messages on this topic will be
-        # delivered through the msgQueueForTopic to the
-        # delivery thread, which will read from this
-        # queue:
-        
-        self.topicWaiterThread.addTopic(topicName, msgQueueForTopic)
-        deliveryThread.start()
+        # Call different underlying methods depending
+        # on whether the topic is a pattern:
+        if pattern_str is None:
+            topic_spec = {topicIdentifier : delivery_queue if threaded else deliveryCallable}
+            if context is not None:
+                topic_spec['_context'] = context****: Solve 'context passing' and make the ELSE clause conform.
+            self.pub_sub.subscribe(topic_spec)
+        else:
+            topic_spec = {pattern_str : delivery_queue if threaded else deliveryCallable,
+                          context : context}
+            self.pub_sub.psubscribe(topic_spec)
 
 
     def unsubscribeFromTopic(self, topicName=None, block=True):
@@ -280,10 +282,6 @@ class BusAdapter(object):
         for subscription in self.mySubscriptions():
             self.unsubscribeFromTopic(subscription)
             
-        #******self.topicWaiterThread.stop()
-        # Wait up to 3sec for the TopicWaiter thread to wind down:
-        #*****self.topicWaiterThread.join(3)
-        
         # Stop all the delivery threads:
         for topicThread in self.topicThreads.values():
             topicThread.stop()

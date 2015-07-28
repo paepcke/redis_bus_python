@@ -85,13 +85,13 @@ class PubSubListener(threading.Thread):
         # Start listening on that connection:        
         self.start()
 
-    def pauseInTraffic(self):
+    def pause_in_traffic(self):
         self.paused = True
         # Get the run() loop out of its
         # hanging call to handle_message():
         self.execute_command('PING')
 
-    def continueInTraffic(self):
+    def continue_in_traffic(self):
         self.paused = True
 
     def stop(self):
