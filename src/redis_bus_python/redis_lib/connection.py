@@ -1,5 +1,6 @@
 from __future__ import with_statement
 
+import copy
 import errno
 from itertools import chain
 import os
@@ -426,7 +427,7 @@ class ParsedConnection(Connection):
     def read_response(self):
         "Read the response from a previously sent command"
         try:
-            response = self._parser.read_response()
+            response = self._parser.read_response(encoding=self.encoding)
         except:
             self.disconnect()
             raise
@@ -585,6 +586,8 @@ class OneShotConnection(Connection):
                 if self.remnant is not None:
                     data = self.remnant + data
                     self.remnant = None
+            except socket.timeout:
+                raise TimeoutError("Server did not respond in time when we expected a line of data.")
             except socket.error as e:
                 if e.args[0] == errno.EAGAIN:
                     time.sleep(0.3)
@@ -610,6 +613,7 @@ class OneShotConnection(Connection):
                     # Have a partial line at the end:
                     self.remnant = lines[-1]
                 
+                # Return the first line:
                 return self.lines_read.pop(0)
 
     def read_string(self, block=True, timeout=None):
@@ -664,7 +668,7 @@ class OneShotConnection(Connection):
         '''
         self._sock.sendall(msg)
         
-    def parse_response(self, response=None):
+    def parse_response(self, response=None, block=True, timeout=None):
         '''
         Obtain a server stream of bytes directly
         from the socket, and parse it until one
@@ -675,11 +679,15 @@ class OneShotConnection(Connection):
         :param response: a previously obtained line of Redis wire protocol.
             If none, readline() is called.
         :type response: string
+        :param block: if True, wait for data from server
+        :type block: boolean
+        :param timeout: (fractional) seconds to wait for data from server
+        :type timeout: float
         :return: an array of parsed Redis
         :rtype: [string]
         '''
         # Parse a response
-        return self._parser.parse_response(response, self, encoding=self.encoding)
+        return self._parser.parse_response(response, self, encoding=self.encoding, timeout=timeout, block=block)
         
 
     def pack_publish_command(self, channel, msg):
@@ -1053,7 +1061,14 @@ class ConnectionPool(object):
                           self._in_use_connections)
         for connection in all_conns:
             connection.disconnect()
-
+    
+    def disconnect_all(self):
+        conns_copy = copy.copy(self._in_use_connections)
+        for conn in conns_copy:
+            self.release(conn)
+            
+        for conn in self._available_connections:
+            conn.disconnect()
 
 class BlockingConnectionPool(ConnectionPool):
     """

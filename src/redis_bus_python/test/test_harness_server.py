@@ -13,23 +13,29 @@ from redis_bus_python.redis_bus import BusAdapter
 from redis_bus_python.test.performance_test_echo_server import \
     PerformanceTesterEchoServer
 
+# Topic on which echo server listens:
+ECHO_CHANNEL = 'echo'
+
 class OnDemandPublisher(threading.Thread):
     '''
     Server thread for testing Redis bus. Serves two
     functions: echoes messages it receives on topic
-    'test' and sends a single message to a given topic
-    on demand.
+    ECHO_CHANNEL, or sends a single 
+    message to a given topic if its send_message()
+    method is called.
     
-    To send the one-shot message, call send_message()
     The echo function acts like a synch-call service
-    should: echoing on the response topic
+    should: echoing on the response topic, which it
+    derives from the msg ID.
+    
+    Keeps track of how many messages it echoes.
+    But after not receiving any messages for 
+    OnDemandPublisher.MAX_IDLE_TIME seconds, the
+    current count is printed, and the counter is 
+    reset to zero.
     
     '''
 
-    to_channel = 'tmp.10'
-    from_channel = 'tmp.20'
-    test_msg = 'Hello world'
-    
     # Maximum time for no message to arrive before
     # starting over counting messages:
     MAX_IDLE_TIME = 5
@@ -39,12 +45,12 @@ class OnDemandPublisher(threading.Thread):
         
         self.beSynchronous = beSynchronous
         
+        self.daemon = True
         self.testBus = BusAdapter()
         
         # Subscribe, and ensure that context is delivered
         # with each message:
-        self.testBus.subscribeToTopic('test', 
-                                      deliveryCallback=functools.partial(self.messageReceiver)) 
+        self.testBus.subscribeToTopic(ECHO_CHANNEL, functools.partial(self.messageReceiver))
         self.interruptEvent = threading.Event()
         self.numEchoed = 0
         self.mostRecentRxTime = None
@@ -57,13 +63,12 @@ class OnDemandPublisher(threading.Thread):
         
         self.done = False
         
-    def sendMessage(self, msg, topic):
+    def sendMessage(self, bus_msg):
         '''
         Trigger interrupt, which will have the run() loop
         send a standard message.
         '''
-        self.outMsg = BusMessage(msg, topic)
-        
+        self.outMsg = bus_msg
         self.sendMsg = True
         self.interruptEvent.set()
         
@@ -125,7 +130,7 @@ class OnDemandPublisher(threading.Thread):
     def startIdleTimer(self):
         threading.Timer(PerformanceTesterEchoServer.MAX_IDLE_TIME, functools.partial(self.resetEchoedCounter)).start()
 
-    def stop(self):
+    def stop(self, signum=None, frame=None):
         self.done = True
         self.interruptEvent.set()
         
@@ -146,11 +151,20 @@ class OnDemandPublisher(threading.Thread):
             self.startTime = time.time()
             self.startIdleTimer()
             self.interruptEvent.wait()
-            if self.sendMsg:
+            if not self.done and self.sendMsg:
                 self.testBus.publish(self.outMsg)
                 self.interruptEvent.clear()
                 self.sendMsg = False
             continue
         
-        self.testBus.unsubscribeFromTopic('test')
+        self.testBus.unsubscribeFromTopic(ECHO_CHANNEL)
         self.testBus.close()
+
+if __name__ == '__main__':
+    echoServer = OnDemandPublisher() 
+    signal.signal(signal.SIGINT, echoServer.stop)
+    echoServer.start()
+    print('Started echo and on-demand publish server; cnt-C to stop...')
+    # Pause till cnt-C causes stop() to be called on the thread:
+    signal.pause()
+    echoServer.join()

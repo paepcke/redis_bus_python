@@ -105,7 +105,7 @@ class PerformanceTesterEchoServer(threading.Thread):
     def startIdleTimer(self):
         threading.Timer(PerformanceTesterEchoServer.MAX_IDLE_TIME, functools.partial(self.resetEchoedCounter)).start()
 
-    def stop(self):
+    def stop(self, signum=None, frame=None):
         self.interruptEvent.set()
         
     def printTiming(self, startTime=None):
@@ -148,16 +148,10 @@ def printThreadTraces():
 #**********
 
 
-def signal_handler(signal, frame):
-        print('Stopping SchoolBus echo service.')
-        echoServer.stop()
-        sys.exit(0)
-
 if __name__ == '__main__':
-
-    signal.signal(signal.SIGUSR1, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    
     echoServer = PerformanceTesterEchoServer(beSynchronous=True)
-    print("Starting to echo msgs on topic 'test'; cnt^C to stop...")
+    signal.signal(signal.SIGINT, functools.partial(echoServer.stop))
+    print("Starting to echo msgs on topic 'test'; cnt-C to stop...")
     echoServer.start()
+    signal.pause()
+    echoServer.join()

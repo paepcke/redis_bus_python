@@ -3,10 +3,13 @@ Created on Jul 25, 2015
 
 @author: paepcke
 '''
+import Queue
 import collections
 import threading
 import time
+import traceback
 
+from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_lib._compat import iteritems, imap, iterkeys, \
     nativestr
 from redis_bus_python.redis_lib.connection import Connection
@@ -56,7 +59,7 @@ class PubSubListener(threading.Thread):
         '''
 
         threading.Thread.__init__(self, name='PubSubInMsgs')
-        self.setDaemon(True)
+        self.daemon = True
         
         self.connection_pool = connection_pool
         self.oneshot_connection_pool = oneshot_connection_pool
@@ -129,7 +132,7 @@ class PubSubListener(threading.Thread):
                 
                 response = self.handle_message(self.parse_response(block=True)) #@UnusedVariable
                 
-        except Exception as e:
+        except Exception:
             # If close() was called by the owner of this
             # client, the closing of subsystems eventually
             # causes an exception, such as ConnectionError;
@@ -140,7 +143,7 @@ class PubSubListener(threading.Thread):
                 return
             else:
                 # An actual error occurred:
-                print('Exit from client: %s' % `e`)
+                #print('Exit from client: %s' % `e`)
                 raise
                 return
 
@@ -154,16 +157,17 @@ class PubSubListener(threading.Thread):
             pass
 
     def reset(self):
+        self.connection_pool.disconnect_all()
+        self.oneshot_connection_pool.disconnect_all()
         if self.connection:
-            self.connection.disconnect()
             self.connection.clear_connect_callbacks()
-            self.connection_pool.release(self.connection)
             self.connection = None
         self.channels = ConditionedDict()
         self.patterns = ConditionedDict()
 
     def close(self):
         self.stop()
+        self.reset()
 
     def on_connect(self, connection):
         "Re-subscribe to any channels and patterns previously subscribed to"
@@ -276,23 +280,43 @@ class PubSubListener(threading.Thread):
           
         return res
 
-    def psubscribe(self, *args, **kwargs):
+    def psubscribe(self, *context, **delivery_mechanisms):
         """
-        Subscribe to channel patterns. Patterns supplied as keyword arguments
-        expect a pattern name as the key and a callable as the value. A
-        pattern's callable will be invoked automatically when a message is
-        received on that pattern.
+        Subscribe to channel patterns. Patterns are specified as keyword arguments.
+        The pattern string is the key and the value is either a callable, or
+        a Queue.Queue. If a callable, then it will be invoked when a message arrives
+        that pattern. The argument will be a BusMessage. If a keyword argument's
+        value is a Queue.Queue instance, then the BusMessage that encapsulates an
+        incoming message will be placed on the queue.
+        
+        :param *context: an optional data structure that will be included
+            in the BusMessage object that is passed to the callable(s) when
+            messages arrive. The context will be available in the BusMessage
+            as property 'context'. Used, for instance, to pass an Event object
+            that the callable sets when it is done.
+        :type *context: <any>
+        :param *delivery_mechanisms-keys: keys of keyword arguments are channel patterns
+            to subscribe to.
+        :type *delivery_mechanisms-keys: string
+        :param *delivery_mechanisms-values: either a callable or a Queue.Queue instance
+        :type *delivery_mechanisms-values: {callable | Queue.Queue}
+        :returns: the number of channels the caller is now subscribed to.
+        :rtype: int
+        :raises TimeoutError: when server does not respond in time.
         """
         
         if self.connection is None:
             self.connection = self.connection_pool.get_connection()
         
-        if args:
-            args = list_or_args(args[0], args[1:])
+        if context:
+            context = context[0]
+        else:
+            context = None
         new_patterns = {}
-        new_patterns.update(dict.fromkeys(imap(self.encode, args)))
-        for pattern, handler in iteritems(kwargs):
-            new_patterns[self.encode(pattern)] = handler
+        for pattern, handler_or_queue in iteritems(delivery_mechanisms):
+            # Map channel to a tuple containing the handler or queue and
+            # the context for use in handle_message():
+            new_patterns[self.encode(pattern)] = (handler_or_queue, context)
 
         # Get the access lock to the dict that
         # holds the pattern-subscriptions:
@@ -313,33 +337,32 @@ class PubSubListener(threading.Thread):
 
         return ret_val
 
-    def punsubscribe(self, *args, **kwargs):
-        """
-        Unsubscribe from the supplied patterns. If empy, unsubscribe from
-        all patterns.
-        """
-        if args:
-            args = list_or_args(args[0], args[1:])
-            
-        try:
-            block = kwargs['block']
-        except KeyError:
-            block = False
-            
+    def punsubscribe(self, *channel_patterns):
+        '''
+        Unsubscribe from the supplied channel_patterns. If empy, unsubscribe from
+        all channel_patterns.
+        
+        :param channel_patterns: channel channel_patterns to unsubscribe from
+        :type channel_patterns: string
+        :returns: number of remaining subscriptions
+        :rtype: int
+        :raises TimeoutError: if server does not acknowledge receipt in time 
+        '''
+
         # Get the access lock to the dict that
         # holds the pattern-subscriptions:
         self.patterns.acquire()
         try:
             # Send unsubscribe command to the server:
-            cmdRes = self.execute_command('PUNSUBSCRIBE', *args)
+            cmdRes = self.execute_command('PUNSUBSCRIBE', *channel_patterns)
     
-            # Now update the self.patterns data structure;
+            # Now update the self.channel_patterns data structure;
             # acquire the access lock.
-            # (update the patterns dict AFTER we send the command. we don't want to
+            # (update the channel_patterns dict AFTER we send the command. we don't want to
             # subscribe twice to these channels, once for the command and again
             # for the reconnection.):
             
-            for pattern in args:
+            for pattern in channel_patterns:
                 try:
                     del self.patterns[pattern]
                 except KeyError:
@@ -350,20 +373,43 @@ class PubSubListener(threading.Thread):
             
         return cmdRes
 
-    def subscribe(self, *args, **kwargs):
+    def subscribe(self, *context, **delivery_mechanisms):
         """
-        Subscribe to channels. Channels supplied as keyword arguments expect
-        a channel name as the key and a callable as the value. A channel's
-        callable will be invoked automatically when a message is received on
-        that channel.
+        Subscribe to channel name. Channel names are specified as keyword arguments.
+        The name string is the key and the value is either a callable, or
+        a Queue.Queue. If a callable, then it will be invoked when a message arrives
+        that channel name. The argument will be a BusMessage. If a keyword argument's
+        value is a Queue.Queue instance, then the BusMessage that encapsulates an
+        incoming message will be placed on the queue.
+        
+        :param *context: an optional data structure that will be included
+            in the BusMessage object that is passed to the callable(s) when
+            messages arrive. The context will be available in the BusMessage
+            as property 'context'. Used, for instance, to pass an Event object
+            that the callable sets when it is done.
+        :type *context: <any>
+        :param *delivery_mechanisms-keys: keys of keyword arguments are channel names
+            to subscribe to.
+        :type *delivery_mechanisms-keys: string
+        :param *delivery_mechanisms-values: either a callable or a Queue.Queue instance
+        :type *delivery_mechanisms-values: {callable | Queue.Queue}
+        :returns: the number of channels the caller is now subscribed to.
+        :rtype: int
+        :raises TimeoutError: when server does not respond in time.
         """
-        if args:
-            args = list_or_args(args[0], args[1:])
+
+        if context:
+            context = context[0]
+        else:
+            context = None
             
         new_channels = {}
-        new_channels.update(dict.fromkeys(imap(self.encode, args)))
-        for channel, handler in iteritems(kwargs):
-            new_channels[self.encode(channel)] = handler
+        
+        
+        for channel, handler_or_queue in iteritems(delivery_mechanisms):
+            # Map channel to a tuple containing the handler or queue and
+            # the context for use in handle_message():
+            new_channels[self.encode(channel)] = (handler_or_queue, context)
 
         # Get the access lock to the dict that
         # holds the channel subscriptions:
@@ -389,18 +435,17 @@ class PubSubListener(threading.Thread):
         finally:
             self.channels.release()
 
-    def unsubscribe(self, *args, **kwargs):
-        """
-        Unsubscribe from the supplied channels. If empty, unsubscribe from
-        all channels
-        """
-        if args:
-            args = list_or_args(args[0], args[1:])
-
-        try:
-            block = kwargs['block']
-        except KeyError:
-            block = False
+    def unsubscribe(self, *channel_names):
+        '''
+        Unsubscribe from the supplied channel names. If empy, unsubscribe from
+        all names.
+        
+        :param channel_names: channel patterns to unsubscribe from
+        :type channel_names: string
+        :returns: number of remaining subscriptions
+        :rtype: int
+        :raises TimeoutError: if server does not acknowledge receipt in time 
+        '''
 
         # Get the access lock to the dict that
         # holds the channel subscriptions:
@@ -408,7 +453,7 @@ class PubSubListener(threading.Thread):
 
         try:
             # Send unsubscribe command to the server:
-            cmdRes = self.execute_command('UNSUBSCRIBE', *args)
+            cmdRes = self.execute_command('UNSUBSCRIBE', *channel_names)
     
             # Now update the self.channels data structure;
             # acquire the access lock.
@@ -416,7 +461,7 @@ class PubSubListener(threading.Thread):
             # subscribe twice to these channels, once for the command and again
             # for the reconnection.):
             
-            for channel in args:
+            for channel in channel_names:
                 try:
                     del self.channels[channel]
                 except KeyError:
@@ -464,38 +509,51 @@ class PubSubListener(threading.Thread):
         :type timeout: float
         :raise TimeoutError: if server does not send expected data.
         '''
-        conn = self.oneshot_connection_pool.get_connection()
+        sub_unsub_conn = self.oneshot_connection_pool.get_connection()
+        pub_conn = self.oneshot_connection_pool.get_connection()
         
-        subscribe_cmd   = conn.pack_subscription_command('SUBSCRIBE', from_channel)
-        publish_cmd     = conn.pack_publish_command(to_channel, msg)
-        unsubscribe_cmd = conn.pack_subscription_command('UNSUBSCRIBE', from_channel)
+        subscribe_cmd   = sub_unsub_conn.pack_subscription_command('SUBSCRIBE', from_channel)
+        publish_cmd     = sub_unsub_conn.pack_publish_command(to_channel, msg)
+        unsubscribe_cmd = sub_unsub_conn.pack_subscription_command('UNSUBSCRIBE', from_channel)
+
+        try:
             
-        conn.write_socket(subscribe_cmd)
-        
-        # Read and discard the returned status.
-        # The method will throw a timeout error if the
-        # server does not send the status. The
-        # status to a subscribe consists of six lines,
-        # such as: 
-        #       '*3\r\n$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'
-
-        for _ in range(6):
-            conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
-        
-        # Publish the request:
-        self.conn.write_socket(publish_cmd)
-        
-        response_arr = self.conn.parse_response(block=True, timeout=timeout)
-        
-        conn.write_socket(unsubscribe_cmd)
-
-        # Read and discard the returned status.
-        # Same expected return format as the subscribe above:
-
-        for _ in range(6):
-            conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
-        
-        return response_arr
+            sub_unsub_conn.write_socket(subscribe_cmd)
+            
+            # Read and discard the returned status.
+            # The method will throw a timeout error if the
+            # server does not send the status. The
+            # status to a subscribe consists of six lines,
+            # such as: 
+            #       '*3\r\n$9\r\nsubscribe\r\n$5\r\ntmp.0\r\n:1\r\n'
+    
+            for _ in range(6):
+                sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
+    
+            
+                    
+            # Publish the request:
+            pub_conn.write_socket(publish_cmd)
+            # Read number of recipients:
+            num_recipients = pub_conn.read_int(block=True, timeout=timeout)
+            
+            # Read the service's response:
+            response_arr = sub_unsub_conn.parse_response(block=True, timeout=timeout)
+            
+            sub_unsub_conn.write_socket(unsubscribe_cmd)
+    
+            # Read and discard the returned status.
+            # Same expected return format as the subscribe above:
+    
+            for _ in range(6):
+                sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
+            
+            # The response_arr now has ['message', <channel>, <payload>].
+            # Return the payload: 
+            return response_arr[2]
+        finally:
+            self.oneshot_connection_pool.release(sub_unsub_conn)
+            self.oneshot_connection_pool.release(pub_conn)
 
     def get_message(self, ignore_subscribe_messages=False, timeout=0):
         """
@@ -513,7 +571,7 @@ class PubSubListener(threading.Thread):
     def handle_message(self, response, ignore_subscribe_messages=False):
         """
         Parses a pub/sub message. If the channel or pattern was subscribed to
-        with a message handler, the handler is invoked instead of a parsed
+        with a message handler_or_queue, the handler_or_queue is invoked instead of a parsed
         message being returned.
         """
         
@@ -535,18 +593,44 @@ class PubSubListener(threading.Thread):
 
             
         if message_type in self.PUBLISH_MESSAGE_TYPES:
-            # Incoming message;
-            # if there's a message handler, invoke it
-            handler = None
+
+            # Incoming message.
+            # Find the queue or callable, and context that are associated with
+            # the incoming pattern/channel-name. Create a BusMessage, and either
+            # call the callable with that instance, or place the instance in the
+            # queue:
+             
+            handler_or_queue = None
+            
             if message_type == 'pmessage':
-                handler = self.patterns.get(message['pattern'], None)
+                try:
+                    (handler_or_queue, context) = self.patterns.get(message['pattern'], None)
+                except TypeError:
+                    # No callable or queue associated with this pattern:
+                    return None
             else:
-                handler = self.channels.get(message['channel'], None)
-            if handler:
-                handler(message)
-                return None
+                try:
+                    (handler_or_queue, context) = self.channels.get(message['channel'], None)
+                except TypeError:
+                    # No callable or queue associated with this channel name:
+                    return None
+
+            # Make a bus object, setting isJsonContent to True. This will
+            # have the BusMessage __init__() method try to parse the data 
+            # as a JSON message that has content/id/time fields:
+            
+            busMsg = BusMessage(content=message['data'], topicName=message['channel'], isJsonContent=True, context=context)
+            
+            if isinstance(handler_or_queue, Queue.Queue):
+                handler_or_queue.put(busMsg)
             else:
-                return message
+                try:
+                    handler_or_queue(busMsg)
+                except TypeError:
+                    raise TypeError("Message delivery method for %s was neither a queue nor a callable: %s" %\
+                                     (busMsg.topicName, handler_or_queue))
+            
+            return None
             
         elif message_type in self.UNSUBSCRIBE_MESSAGE_TYPES:
             # if this is an unsubscribe message, indicate that

@@ -93,7 +93,7 @@ class BusAdapter(object):
         if topicName is None:
             raise ValueError('Attempt to publish a BusMessage instance that does not hold a topic name: %s' % str(busMessage))
         msgUuid = busMessage.id
-            
+        
         # Get the serialized, UTF-8 encoded message from the BusMessage:
         msg = busMessage.content
             
@@ -110,11 +110,16 @@ class BusAdapter(object):
         if sync:
             returnTopic = self.getResponseTopic(busMessage)
             # Post the request, and get the response in one command:
-            res = self.pub_sub.pub_round_trip(self, topicName, json.dumps(msgDict), returnTopic, timeout) 
-            return res
+            res = self.pub_sub.pub_round_trip(topicName, json.dumps(msgDict), returnTopic, timeout) 
+            # Result will be a SchoolBus message, like this:
+            #    u'{"content": "Server result here.", 
+            #       "id": "4032b287-3e30-4d48-b713-91dd8a0a6e39", 
+            #       "time": 1438200349626}'
+            
+            return json.loads(res)['content']
         else:
             # Not a synchronous call; just publish the request:
-            numRecipients = self.topicWaiterThread.rserver.publish(topicName, json.dumps(msgDict), block=block)
+            numRecipients = self.rserver.publish(topicName, json.dumps(msgDict), block=block)
             return numRecipients
           
     def subscribeToTopic(self, topicIdentifier, deliveryCallable, threaded=True, context=None):
@@ -180,6 +185,8 @@ class BusAdapter(object):
                                             delivery_queue, 
                                             deliveryCallable, 
                                             context)
+            deliveryThread.daemon = True
+            
             # Remember that we have another thread:            
             self.topicThreads[pattern_str if pattern_str is not None else topicIdentifier] = deliveryThread
             deliveryThread.start()
@@ -190,16 +197,13 @@ class BusAdapter(object):
         # on whether the topic is a pattern:
         if pattern_str is None:
             topic_spec = {topicIdentifier : delivery_queue if threaded else deliveryCallable}
-            if context is not None:
-                topic_spec['_context'] = context****: Solve 'context passing' and make the ELSE clause conform.
-            self.pub_sub.subscribe(topic_spec)
+            self.pub_sub.subscribe(context, **topic_spec)
         else:
-            topic_spec = {pattern_str : delivery_queue if threaded else deliveryCallable,
-                          context : context}
-            self.pub_sub.psubscribe(topic_spec)
+            topic_spec = {pattern_str : delivery_queue if threaded else deliveryCallable}
+            self.pub_sub.psubscribe(context, **topic_spec)
 
 
-    def unsubscribeFromTopic(self, topicName=None, block=True):
+    def unsubscribeFromTopic(self, topicName=None):
         '''
         Unsubscribes from topic. Stops the topic's thread,
         and removes it from bookkeeping so that the Thread object
@@ -212,14 +216,9 @@ class BusAdapter(object):
         
         :param topicName: name of topic to subscribe from
         :type topicName: {string | None}
-        :param block: if true, call blocks until Redis server has acknowledged
-            completion of the unsubscribe action.
-        :type block: bool
         '''
 
-        # Tell the TopicWaiter to go deaf on the topic:
-        self.topicWaiterThread.removeTopic(topicName, block=block)
-
+        self.pub_sub.unsubscribe(topicName)
         if topicName is None:
             # Kill all topic threads:
             for deliveryThread in self.topicThreads.values():
@@ -227,7 +226,7 @@ class BusAdapter(object):
                 # Wait for thread to finish; timeout is a bit more
                 # than the 'stop-looking-at-queue' timeout used to check
                 # for periodic thread stoppage:
-                #*********deliveryThread.join()
+                deliveryThread.join()
             self.topicThreads = {}
         else:
             try:
@@ -250,7 +249,10 @@ class BusAdapter(object):
         content. This method will return a new message with its
         content field set to the new content, and the destination
         topic set to the one where the original sender expects the
-        response.
+        response. The SchoolBus protocol specifies that this response
+        topic is tmp.<msgId>, where <msgId> is the message ID of the
+        incoming message. 
+        
         
         :param incomingBusMessage: the BusMessage object that delivered the request to the handler
             from which a response is returned via calling this method.
@@ -264,7 +266,7 @@ class BusAdapter(object):
 
         # Response topics are re-stored in BusMessage instances:
         respBusMsg = BusMessage(content=responseContent, 
-                                topicName=incomingBusMsg.responseTopic)
+                                topicName='tmp.' + str(incomingBusMsg.id))
         return respBusMsg
         
         
@@ -275,8 +277,7 @@ class BusAdapter(object):
         :return: List of topics to which caller is subscribed.
         :rtype: [String]
         '''
-        #return self.pubsub.channels.keys()
-        return self.topicWaiterThread.topics()
+        return self.pub_sub.channels.keys() + self.pub_sub.patterns.keys()
         
     def close(self):
         for subscription in self.mySubscriptions():
@@ -289,6 +290,8 @@ class BusAdapter(object):
             # 'check whether to stop' timeout of the
             # delivery threads' queue hanging: 
             topicThread.join()
+        self.pub_sub.close()
+        self.pub_sub.join(2)
 
 # --------------------------  Private Methods ---------------------
 
@@ -383,7 +386,7 @@ class DeliveryThread(threading.Thread):
         :type context: <any>
         '''
         threading.Thread.__init__(self, name=topicName + 'Thread')
-        self.setDaemon(True)
+        self.daemon = True
         
         self.deliveryQueue = deliveryQueue
         self.deliveryFunc  = deliveryFunc
@@ -417,7 +420,7 @@ class DeliveryThread(threading.Thread):
                 return
             
             # Call the delivery callback:
-            self.deliveryFunc(busMsg, self.context)
+            self.deliveryFunc(busMsg)
 
 
 if __name__ == '__main__':

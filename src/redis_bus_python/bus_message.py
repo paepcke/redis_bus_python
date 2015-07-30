@@ -4,6 +4,7 @@ Created on May 19, 2015
 @author: paepcke
 '''
 import datetime
+import json
 import time
 import uuid
 
@@ -16,7 +17,7 @@ class BusMessage(object):
     '''
 
 
-    def __init__(self, content=None, topicName=None, moreArgsDict=None, **kwargs):
+    def __init__(self, content=None, topicName=None, isJsonContent=None, moreArgsDict=None, **kwargs):
         '''
         Create a bus message. The optional parameter moreArgsDict adds
         the respective key/values as instance variables. So if
@@ -33,26 +34,46 @@ class BusMessage(object):
         :param moreArgsDict: optional dictionary of additional key/value pairs.
             Instance variables will be created for them.
         :type moreArgsDict: {String : <any>}
+        :param isJsonContent: if True, instance creation will consider the content
+            to be a JSON compliant dict of the form {"content": "foo", "id": "myId", "time": "12345"}
+            In this case the instance's content/id/time properties will be set to the
+            respective values in the dict.
         '''
-        self.content    = content
+        if isJsonContent:
+            contentDict = json.loads(content)
+            self.content = contentDict.get('content', None)
+            self._id = contentDict.get('id', None)
+            if self._id is None:
+                self._id = contentDict._createUuid()
+            self._time = contentDict.get('time', None)
+            if self._time is None:
+                contentDict._int(time.time) * 1000
+        else:
+            self.content    = content
+            # If moreArgsDict includes a key 'id' then
+            # the following _id value will be overwritten
+            # below. That's by design, so that one can
+            # feed a json-decoded incoming bus msg in via
+            # moreArgsDict, and have this BusMessage instance
+            # reflect that incoming json-formatted message.
+            # Without moreArgsDict or in the absence of 
+            # an 'id' key in moreArgsDict, the following UUID 
+            # remains this BusMessage instance's id:
+            
+            self._id        = self._createUuid()
+            
+            # Init the time field, though that might be
+            # modified by the BusAdapter.publish() method.
+            # See comment above for _time being overwritten:
+            
+            self._time  	= int(time.time()*1000)
+
         self._topicName = topicName
-        # If moreArgsDict includes a key 'id' then
-        # the following _id value will be overwritten
-        # below. That's by design, so that one can
-        # feed a json-decoded incoming bus msg in via
-        # moreArgsDict, and have this BusMessage instance
-        # reflect that incoming json-formatted message.
-        # Without moreArgsDict or in the absence of 
-        # an 'id' key in moreArgsDict, the following UUID 
-        # remains this BusMessage instance's id:
         
-        self._id        = self._createUuid()
+        # A data structure to pass to callable, if this message
+        # is passed to one:
         
-        # Init the time field, though that might be
-        # modified by the BusAdapter.publish() method.
-        # See comment above for _time being overwritten:
-        
-        self._time  	= int(time.time()*1000)
+        self.context = None
 
         if moreArgsDict is not None:
             if type(moreArgsDict) != dict:
@@ -99,6 +120,13 @@ class BusMessage(object):
     def time(self, msecSinceEpoch):
         self._time = msecSinceEpoch
         
+    @property
+    def context(self):
+        return self._context
+    
+    @context.setter
+    def context(self, new_context):
+        self._context = new_context
     
     @property
     def isoTime(self, timeZone='GMT'):

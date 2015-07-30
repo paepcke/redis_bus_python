@@ -6,6 +6,8 @@ Created on Jul 26, 2015
 '''
 import functools
 import hashlib
+import signal
+import sys
 import threading
 
 from redis_bus_python.redis_bus import BusAdapter
@@ -31,7 +33,7 @@ class ReceptionTester(threading.Thread):
         # Subscribe, and ensure that context is delivered
         # with each message:
         self.testBus.subscribeToTopic(topic_to_wait_on, 
-                                      deliveryCallback=functools.partial(self.messageReceiver), 
+                                      functools.partial(self.messageReceiver), 
                                       context=msgMd5)
         self.interruptEvent = threading.Event()
         self.done = False
@@ -57,16 +59,22 @@ class ReceptionTester(threading.Thread):
             self.testBus.publish(self.testBus.makeResponseMsg(busMsg, busMsg.content))
 
     
-    def stop(self):
+    def stop(self, signum=None, frame=None):
+        #**********
+        print('Cntr-C called')
+        #**********
         self.interruptEvent.set()
             
     def run(self):
-        print("Sync-call test server started; listening on %s" % self.topic_to_wait_on)
+        print("Sync-call test server started; listening on %s; Cnt-C to quit" % self.topic_to_wait_on)
         self.interruptEvent.wait()
         self.testBus.unsubscribeFromTopic('test')
         self.testBus.close()
 
 if __name__ == '__main__':
-    syncServer = ReceptionTester(beSynchronous=True)
-    syncServer.start()
-    syncServer.join()
+    echoServer = ReceptionTester(beSynchronous=True)
+    signal.signal(signal.SIGINT, echoServer.stop)
+    echoServer.start()
+    # Pause till cnt-C causes stop() to be called on the thread:
+    signal.pause()
+    echoServer.join()

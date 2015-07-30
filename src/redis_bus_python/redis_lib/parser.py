@@ -216,7 +216,7 @@ class PythonParser(BaseParser):
         return self._buffer.read_subscription_cmd_status_return(subscription_command, channel)
         
 
-    def read_response(self, socket_buffer=None):
+    def read_response(self, socket_buffer=None, encoding=None):
         '''
         Reads one line from the wire, and interprets it.
         Example: the acknowledgment to an unsubscribe
@@ -258,5 +258,5 @@ class PythonParser(BaseParser):
         if not response:
             raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
 
-        return self.parse_response(response)
+        return self.parse_response(response, socket_buffer=self._buffer, encoding=encoding)
 

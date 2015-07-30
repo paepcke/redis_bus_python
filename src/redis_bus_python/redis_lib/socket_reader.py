@@ -51,7 +51,7 @@ class SocketLineReader(threading.Thread):
         '''
 
         threading.Thread.__init__(self, name='SocketReader' if name is None else 'SocketReader' + name)
-        self.setDaemon(True)
+        self.daemon = True
 
         self._sock = socket
         
@@ -73,7 +73,7 @@ class SocketLineReader(threading.Thread):
     def empty(self):
         return self._delivery_queue.empty()
         
-    def readline(self):
+    def readline(self, block=True, timeout=None):
         '''
         Hangs on the queue where the run() method
         places incoming strings. Returns the oldest
@@ -83,14 +83,24 @@ class SocketLineReader(threading.Thread):
         :return: one cr/lf delimited line that was received from they server.
         :rtype: string 
         '''
+    
+        if block and timeout is None:
+            timeout = SocketLineReader.SOCKET_READ_TIMEOUT
         
         while not self._done:
             try:
                 # Read one whole line, without the closing SYM_CRLF,
                 # pausing occasionally to check whether the thread
                 # has been stopped:
-                return self._delivery_queue.get(SocketLineReader.DO_BLOCK, SocketLineReader.SOCKET_READ_TIMEOUT)
+                if not block:
+                    try:
+                        return self._delivery_queue.get(SocketLineReader.DONT_BLOCK)
+                    except Queue.Empty:
+                        raise TimeoutError("No line was available for reading, and block was set to False")
+                else:
+                    return self._delivery_queue.get(SocketLineReader.DO_BLOCK, SocketLineReader.SOCKET_READ_TIMEOUT)
             except Queue.Empty:
+                # Timeout:
                 continue
         
     def read(self, length):

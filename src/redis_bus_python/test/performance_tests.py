@@ -19,6 +19,7 @@ import traceback
 from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
 from redis_bus_python.schoolbus_exceptions import SyncCallTimedOut
+from redis_bus_python.test.test_harness_server import ECHO_CHANNEL
 
 
 class RedisPerformanceTester(object):
@@ -56,9 +57,6 @@ class RedisPerformanceTester(object):
         for _ in range(numMsgs):
             self.bus.publish(busMsg, block=block)
         endTime = time.time()
-        #************
-        print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
-        #************
         self.printResult('Publishing %s msgs to empty space (block==%s): ' % (str(numMsgs),str(block)), startTime, endTime, numMsgs)
     
     def publishToSubscribedTopic(self, numMsgs, msgLen, block=True, sameProcessListener=True):
@@ -84,16 +82,13 @@ class RedisPerformanceTester(object):
         busMsg = BusMessage(content=msg, topicName='test')
         try:
             listenerThread = ReceptionTester(msgMd5=md5, beSynchronous=False)
-            listenerThread.setDaemon(True)
+            listenerThread.daemon = True
             listenerThread.start()
             
             startTime = time.time()
             for _ in range(numMsgs):
                 self.bus.publish(busMsg, block=block)
             endTime = time.time()
-            #************
-            print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
-            #************
             self.printResult('Publishing %s msgs to a subscribed topic (block==%s): ' % (str(numMsgs), str(block)), startTime, endTime, numMsgs)
         except Exception:
             raise
@@ -103,12 +98,12 @@ class RedisPerformanceTester(object):
             
     def syncPublishing(self, numMsgs, msgLen, block=True):
 
-        sys.stdout.write('Run python src/redis_bus_python/test/sync_test_serve.py and hit ENTER...')
+        sys.stdout.write('Run python src/redis_bus_python/test/sync_test_server.py and hit ENTER...')
         sys.stdin.readline()
         
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
 
-        busMsg = BusMessage(content=msg, topicName='test')
+        busMsg = BusMessage(content=msg, topicName=ECHO_CHANNEL)
 
 
         startTime = time.time()
@@ -122,9 +117,6 @@ class RedisPerformanceTester(object):
                     raise
                     
             endTime = time.time()
-            #************
-            print ('Accumulated connections: %d' % len(self.bus.topicWaiterThread.rserver.connection_pool._available_connections))
-            #************
             self.printResult('Publishing %s synch msgs (block==%s): ' % (str(numMsgs), str(block)), startTime, endTime, numMsgs)
         finally:
             pass
@@ -221,7 +213,7 @@ class ReceptionTester(threading.Thread):
     
     def __init__(self, msgMd5=None, beSynchronous=False, topic_to_wait_on='test'):
         threading.Thread.__init__(self, name='PerfTestReceptor')
-        self.setDaemon(True)
+        self.daemon = True
         
         self.beSynchronous = beSynchronous
         
@@ -230,7 +222,7 @@ class ReceptionTester(threading.Thread):
         # Subscribe, and ensure that context is delivered
         # with each message:
         self.testBus.subscribeToTopic(topic_to_wait_on, 
-                                      deliveryCallback=functools.partial(self.messageReceiver), 
+                                      functools.partial(self.messageReceiver), 
                                       context=msgMd5)
         self.interruptEvent = threading.Event()
         self.done = False
@@ -305,18 +297,18 @@ if __name__ == '__main__':
      
 #    sys.exit()
     
-#     sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
-#     sys.stdin.readline()
+#    sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
+#    sys.stdin.readline()
 
-#     print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
-#     tester.publishToSubscribedTopic(10000,100, block=False, sameProcessListener=False)
-#     print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
-#     tester.publishToSubscribedTopic(10000,100, block=True, sameProcessListener=False)
-#     print('--------------------')    
+#    print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
+#    tester.publishToSubscribedTopic(10000,100, block=False, sameProcessListener=False)
+#    print('------Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
+#    tester.publishToSubscribedTopic(10000,100, block=True, sameProcessListener=False)
+#    print('--------------------')    
     
 #    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
 #    tester.syncPublishing(10000,100, block=False)
-    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
+#    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
     tester.syncPublishing(10000,100, block=True)
     print('--------------------')    
 
