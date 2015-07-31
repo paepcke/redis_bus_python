@@ -17,7 +17,7 @@ class BusMessage(object):
     '''
 
 
-    def __init__(self, content=None, topicName=None, isJsonContent=None, moreArgsDict=None, **kwargs):
+    def __init__(self, content=None, topicName=None, isJsonContent=False, moreArgsDict=None, **kwargs):
         '''
         Create a bus message. The optional parameter moreArgsDict adds
         the respective key/values as instance variables. So if
@@ -34,40 +34,36 @@ class BusMessage(object):
         :param moreArgsDict: optional dictionary of additional key/value pairs.
             Instance variables will be created for them.
         :type moreArgsDict: {String : <any>}
-        :param isJsonContent: if True, instance creation will consider the content
+        :param isJsonContent: if True, instance creation will consider the content value
             to be a JSON compliant dict of the form {"content": "foo", "id": "myId", "time": "12345"}
             In this case the instance's content/id/time properties will be set to the
-            respective values in the dict.
+            respective values in the dict. If this parameter is True, and the content
+            field is either not legal JSON, or does not contain SchoolBus-required
+            fields, those missing fields are set to None.  If isJsonContent is false, then
+            the content field is placed into this new instance's content field as a value,
+            and message ID and timestamps are generated.
         '''
         if isJsonContent:
-            contentDict = json.loads(content)
-            self.content = contentDict.get('content', None)
-            self._id = contentDict.get('id', None)
-            if self._id is None:
-                self._id = contentDict._createUuid()
-            self._time = contentDict.get('time', None)
-            if self._time is None:
-                contentDict._int(time.time) * 1000
+            # See whether this is a real BusMessage, with 
+            # the expected outermost fields:
+            try:
+                contentDict = json.loads(content)
+            except ValueError:
+                # Initialize the instance, but don't generate
+                # a legal ID field: the data passed to us
+                # was not a legitimate SchoolBus message:
+                self.init_defaults(content, generate_good_defaults=False)
+            else:   
+                self.content = contentDict.get('content', None)
+                self._id = contentDict.get('id', None)
+                if self._id is None:
+                    self._id = contentDict._createUuid()
+                self._time = contentDict.get('time', None)
+                if self._time is None:
+                    contentDict._int(time.time) * 1000
         else:
-            self.content    = content
-            # If moreArgsDict includes a key 'id' then
-            # the following _id value will be overwritten
-            # below. That's by design, so that one can
-            # feed a json-decoded incoming bus msg in via
-            # moreArgsDict, and have this BusMessage instance
-            # reflect that incoming json-formatted message.
-            # Without moreArgsDict or in the absence of 
-            # an 'id' key in moreArgsDict, the following UUID 
-            # remains this BusMessage instance's id:
+            self.init_defaults(content)
             
-            self._id        = self._createUuid()
-            
-            # Init the time field, though that might be
-            # modified by the BusAdapter.publish() method.
-            # See comment above for _time being overwritten:
-            
-            self._time  	= int(time.time()*1000)
-
         self._topicName = topicName
         
         # A data structure to pass to callable, if this message
@@ -103,6 +99,41 @@ class BusMessage(object):
                 
         for instVarName,instVarValue in list(kwargs.items()):
             setattr(self, instVarName, instVarValue)
+           
+    def init_defaults(self, content, generate_good_defaults=True):
+        '''
+        Given the content of a message-to-be, put that content
+        into the content field, and initialize time and id fields.
+        
+        :param content: data to place into the content field
+        :type content: <any>
+        :param generate_good_defaults: if True, a universally unique ID 
+            and a legal time field are generated.
+            Else the ID field and time are set to None. Used to indicate that this
+            message instance was created from data that was advertised as being
+            SchoolBus syntax, but was not. See __init__() method for more
+            info.
+        :type generate_good_defaults: bool
+        '''
+        self.content    = content
+        # If moreArgsDict includes a key 'id' then
+        # the following _id value will be overwritten
+        # below. That's by design, so that one can
+        # feed a json-decoded incoming bus msg in via
+        # moreArgsDict, and have this BusMessage instance
+        # reflect that incoming json-formatted message.
+        # Without moreArgsDict or in the absence of 
+        # an 'id' key in moreArgsDict, the following UUID 
+        # remains this BusMessage instance's id:
+        
+        self._id = self._createUuid() if generate_good_defaults else None
+        
+        # Init the time field, though that might be
+        # modified by the BusAdapter.publish() method.
+        # See comment above for _time being overwritten:
+        
+        self._time = time.time() if generate_good_defaults else None
+        
                 
     @property
     def id(self):
@@ -117,8 +148,8 @@ class BusMessage(object):
         return self._time
     
     @time.setter
-    def time(self, msecSinceEpoch):
-        self._time = msecSinceEpoch
+    def time(self, secSinceEpoch):
+        self._time = secSinceEpoch
         
     @property
     def context(self):

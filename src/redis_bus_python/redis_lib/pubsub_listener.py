@@ -7,6 +7,7 @@ import Queue
 import collections
 import threading
 import time
+import timeit
 import traceback
 
 from redis_bus_python.bus_message import BusMessage
@@ -29,6 +30,14 @@ class PubSubListener(threading.Thread):
     subscriptions (self.pattern).
 
     """
+    #********
+#     ream_cmd = """
+#     for _ in range(6):
+#         self.sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
+#     """
+    ream_time = 0.0
+    #********
+    
     PUBLISH_MESSAGE_TYPES = ('message', 'pmessage')
     UNSUBSCRIBE_MESSAGE_TYPES = ('unsubscribe', 'punsubscribe')
     SUBSCRIBE_MESSAGE_TYPES = ('subscribe', 'psubscribe')
@@ -529,13 +538,11 @@ class PubSubListener(threading.Thread):
     
             for _ in range(6):
                 sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
-    
-            
-                    
+                        
             # Publish the request:
             pub_conn.write_socket(publish_cmd)
             # Read number of recipients:
-            num_recipients = pub_conn.read_int(block=True, timeout=timeout)
+            pub_conn.read_int(block=True, timeout=timeout)
             
             # Read the service's response:
             response_arr = sub_unsub_conn.parse_response(block=True, timeout=timeout)
@@ -545,8 +552,14 @@ class PubSubListener(threading.Thread):
             # Read and discard the returned status.
             # Same expected return format as the subscribe above:
     
+            #********
+            #PubSubListener.ream_time += timeit.timeit(stmt=PubSubListener.ream_cmd)
+            start_time = time.time()
             for _ in range(6):
                 sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
+            PubSubListener.ream_time += time.time() - start_time
+            #********
+                
             
             # The response_arr now has ['message', <channel>, <payload>].
             # Return the payload: 
@@ -617,7 +630,9 @@ class PubSubListener(threading.Thread):
 
             # Make a bus object, setting isJsonContent to True. This will
             # have the BusMessage __init__() method try to parse the data 
-            # as a JSON message that has content/id/time fields:
+            # as a JSON message that has content/id/time fields. If the message
+            # is not proper JSON, the BusMessage init function will just put
+            # the data itself into the content field:
             
             busMsg = BusMessage(content=message['data'], topicName=message['channel'], isJsonContent=True, context=context)
             

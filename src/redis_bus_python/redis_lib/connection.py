@@ -576,7 +576,7 @@ class OneShotConnection(Connection):
                     (readReady, writeReady, errReady) = select([self._sock],[],[], 0) #@UnusedVariable
                     return None
                 
-                # Something arrived on the socket.                    
+                # Something arrived on the socket.
                 data = self._sock.recv(self.socket_read_size)
                 # An empty string indicates the server shutdown the socket
                 if isinstance(data, bytes) and len(data) == 0:

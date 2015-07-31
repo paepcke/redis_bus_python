@@ -9,6 +9,7 @@ Created on Jul 8, 2015
 import functools
 import hashlib
 import random
+import signal
 import socket
 import string
 import sys
@@ -18,8 +19,10 @@ import traceback
 
 from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
+from redis_bus_python.redis_lib.exceptions import TimeoutError
+from redis_bus_python.redis_lib.pubsub_listener import PubSubListener
 from redis_bus_python.schoolbus_exceptions import SyncCallTimedOut
-from redis_bus_python.test.test_harness_server import ECHO_CHANNEL
+from redis_bus_python.test.test_harness_server import ECHO_TOPIC
 
 
 class RedisPerformanceTester(object):
@@ -27,6 +30,7 @@ class RedisPerformanceTester(object):
     classdocs
     '''
 
+    PUBLISH_TOPIC = 'test'
 
     def __init__(self):
         '''
@@ -52,7 +56,7 @@ class RedisPerformanceTester(object):
         :type msgLen:
         '''
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
-        busMsg = BusMessage(content=msg, topicName='test')
+        busMsg = BusMessage(content=msg, topicName=RedisPerformanceTester.PUBLISH_TOPIC)
         startTime = time.time()
         for _ in range(numMsgs):
             self.bus.publish(busMsg, block=block)
@@ -74,12 +78,12 @@ class RedisPerformanceTester(object):
         :type block: bool
         :param sameProcessListener: if True, the listener to messages will be a thread in this
             Python process (see below). Else an outside process is expected to be subscribed
-            to 'test'.
+            to RedisPerformanceTester.PUBLISH_TOPIC.
         :type sameProcessListener: bool
         '''
 
         (msg, md5) = self.createMessage(msgLen)
-        busMsg = BusMessage(content=msg, topicName='test')
+        busMsg = BusMessage(content=msg, topicName=RedisPerformanceTester.PUBLISH_TOPIC)
         try:
             listenerThread = ReceptionTester(msgMd5=md5, beSynchronous=False)
             listenerThread.daemon = True
@@ -98,12 +102,12 @@ class RedisPerformanceTester(object):
             
     def syncPublishing(self, numMsgs, msgLen, block=True):
 
-        sys.stdout.write('Run python src/redis_bus_python/test/sync_test_server.py and hit ENTER...')
-        sys.stdin.readline()
+        #sys.stdout.write('Run python src/redis_bus_python/test/test_harness_server.py echo and hit ENTER...')
+        #sys.stdin.readline()
         
         (msg, md5) = self.createMessage(msgLen) #@UnusedVariable
 
-        busMsg = BusMessage(content=msg, topicName=ECHO_CHANNEL)
+        busMsg = BusMessage(content=msg, topicName=ECHO_TOPIC)
 
 
         startTime = time.time()
@@ -152,6 +156,14 @@ class RedisPerformanceTester(object):
             
         end_time = time.time()
         self.printResult('Sent %d msgs on raw socket; block==%s' % (numMsgs, block), start_time, end_time, numMsgs)
+    
+    def justListenAndCount(self):
+        listenerThread = ReceptionTester(beSynchronous=False)
+        listenerThread.daemon = True
+        listenerThread.start()
+        signal.pause()
+        listenerThread.stop()
+        listenerThread.join()
     
     def createMessage(self, msgLen):
         '''
@@ -211,10 +223,11 @@ class ReceptionTester(threading.Thread):
     till stop() is called.
     '''
     
-    def __init__(self, msgMd5=None, beSynchronous=False, topic_to_wait_on='test'):
+    def __init__(self, msgMd5=None, beSynchronous=False, topic_to_wait_on=RedisPerformanceTester.PUBLISH_TOPIC):
         threading.Thread.__init__(self, name='PerfTestReceptor')
         self.daemon = True
-        
+       
+        self.rxed_count = 0
         self.beSynchronous = beSynchronous
         
         self.testBus = BusAdapter()
@@ -237,12 +250,16 @@ class ReceptionTester(threading.Thread):
             called with one.
         :type context: <any>
         '''
+        if context is not None:
+            inMd5 = hashlib.md5(str(busMsg.content)).hexdigest()
+            # Check that the context was delivered:
+            if inMd5 != context:
+                raise ValueError("md5 in msg should be %s, but was %s" % (inMd5, context))
+
+        self.rxed_count += 1
+        if self.rxed_count % 1000 == 0:
+            print(self.rxed_count)
         
-        inMd5 = hashlib.md5(str(busMsg.content)).hexdigest()
-        # Check that the context was delivered:
-        if inMd5 != context:
-            raise ValueError("md5 in msg should be %s, but was %s" % (inMd5, context))
-                
         if self.beSynchronous:
             # Publish a response:
             self.testBus.publish(self.testBus.makeResponseMsg(busMsg), busMsg.content)
@@ -253,8 +270,9 @@ class ReceptionTester(threading.Thread):
             
     def run(self):
         self.interruptEvent.wait()
-        self.testBus.unsubscribeFromTopic('test')
+        self.testBus.unsubscribeFromTopic(RedisPerformanceTester.PUBLISH_TOPIC)
         self.testBus.close()
+
 
 #**********
 def printThreadTraces():
@@ -274,11 +292,20 @@ def printThreadTraces():
     
     while True:
         time.sleep(5)
-#**********
+        
+    
         
 if __name__ == '__main__':
 
     tester = RedisPerformanceTester()
+    
+    usage = 'Usage: {listen | publish | syncpublish}' 
+    
+    if len(sys.argv) > 1:
+        to_do = sys.argv[1]
+    else:
+        print(usage)
+        sys.exit()
 
 #     print('Raw iron')
 #     # Keep run() in PubSub from stealing return values:
@@ -289,13 +316,14 @@ if __name__ == '__main__':
 #     
 #     sys.exit()
     
-#     print('------Publish to unsubscribed topic; block == False------')
-#     tester.publishToUnsubscribedTopic(10000, 100, block=False)
-#     print('------Publish to unsubscribed topic; block == True------')
-#     tester.publishToUnsubscribedTopic(10000, 100, block=True)
-#     print('--------------------')
+    if to_do == 'publish':
+        print("------Publish to '%s'; block == False------" % RedisPerformanceTester.PUBLISH_TOPIC)
+        tester.publishToUnsubscribedTopic(10000, 100, block=False)
+        print("------Publish to '%s'; block == True------" % RedisPerformanceTester.PUBLISH_TOPIC)
+        tester.publishToUnsubscribedTopic(10000, 100, block=True)
+        print('--------------------')
      
-#    sys.exit()
+        sys.exit()
     
 #    sys.stdout.write('Run python src/redis_bus_python/test/performance_test_echo_server.py and hit ENTER...')
 #    sys.stdin.readline()
@@ -306,10 +334,31 @@ if __name__ == '__main__':
 #    tester.publishToSubscribedTopic(10000,100, block=True, sameProcessListener=False)
 #    print('--------------------')    
     
-#    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=False------')    
-#    tester.syncPublishing(10000,100, block=False)
-#    print('------Synch-Publish 10,000 msgs of len 100 to a subscribed topic; block=True------')    
-    tester.syncPublishing(10000,100, block=True)
-    print('--------------------')    
+    if to_do == 'syncpublish':
+        try:
+            print('------Synch-Publish 10,000 msgs of len 100 to echo server; block=False------')    
+            tester.syncPublishing(10000,100, block=False)
+            print('------Synch-Publish 10,000 msgs of len 100 to echo server; block=True------')
+            tester.syncPublishing(10000,100, block=True)
+        except TimeoutError:
+            "Didn't get echo messages; is <redis_code_root>/src/redis_bus_python/test/test_harness_server.py running?"
+        
+        sys.exit()    
+
+    
+#    tester.syncPublishing(10000,100, block=True)
+
+#     while True:
+#         tester.publishToUnsubscribedTopic(10000,100,block=True)
+    
+    if to_do == 'listen':
+        try:
+            tester.justListenAndCount()
+            print('--------------------')
+        except TimeoutError:
+            "Didn't get any messages; is <redis_code_root>/src/redis_bus_python/test/test_harness_server.py running?"
+        
+        sys.exit()    
+        
 
     tester.close()

@@ -1960,7 +1960,7 @@ class StrictRedis(object):
         # informative name:
         connection = self.oneshot_connection_pool.get_connection('PUBLISH_%s' % channel)
         try:
-            connection.send_packed_command(connection.pack_publish_command(channel, message))
+            connection.write_socket(connection.pack_publish_command(channel, message))
             if block:
                 # Read a number from the socket:
                 num_recipients = connection.read_int()
