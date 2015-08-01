@@ -34,7 +34,7 @@ STANDARD_MSG_LENGTH = 100
 class OnDemandPublisher(threading.Thread):
     '''
     Server for testing Redis bus modules. Started from the
-    command line, or imported into unittests. Serves multiple
+    command line, or imported into applications. Serves multiple
     functions, individually or together:
     
         1. echoes messages it receives on topic ECHO_TOPIC.
@@ -153,6 +153,12 @@ class OnDemandPublisher(threading.Thread):
         self.daemon = True
         self.testBus = BusAdapter()
         self.done = False
+        
+        self.echo_topic = ECHO_TOPIC
+        self.syntax_check_topic = SYNTAX_TOPIC
+        self.stream_topic = STREAM_TOPIC
+        self.one_shot_topic = STREAM_TOPIC
+        self.standard_msg_len = STANDARD_MSG_LENGTH
 
         # Handle Cnt-C properly:
         signal.signal(signal.SIGINT, functools.partial(self.stop))
@@ -172,9 +178,9 @@ class OnDemandPublisher(threading.Thread):
             #   - A two-element array if both topic and
             #        content were specified.
 
-            (self.one_shot_topic, self.one_shot_content) = oneShotMsg
-            if self.one_shot_topic is None:
-                self.one_shot_topic = STREAM_TOPIC
+            (one_shot_topic, self.one_shot_content) = oneShotMsg
+            if one_shot_topic is not None:
+                self.one_shot_topic = one_shot_topic
             
             # Create a message that one can have sent on demand
             # by sending a SIGUSR1 to the server, or using
@@ -196,7 +202,7 @@ class OnDemandPublisher(threading.Thread):
         if serveEchos:
             # Have incoming messages delivered to messageReceiver() not
             # via a queue, but by direct call from the library:
-            self.testBus.subscribeToTopic(ECHO_TOPIC, functools.partial(self.messageReceiver), threaded=False)
+            self.testBus.subscribeToTopic(self.echo_topic, functools.partial(self.messageReceiver), threaded=False)
 
         if listenOn is not None:
             # If we are to listen to some (additional) topic(s),
@@ -205,7 +211,7 @@ class OnDemandPublisher(threading.Thread):
                 self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
 
         if checkSyntax:
-            self.testBus.subscribeToTopic(SYNTAX_TOPIC, functools.partial(self.syntaxCheckReceiver))
+            self.testBus.subscribeToTopic(self.syntaxTopic, functools.partial(self.syntaxCheckReceiver))
             
         self.interruptEvent = threading.Event()
         
@@ -232,9 +238,9 @@ class OnDemandPublisher(threading.Thread):
             #   - A two-element array if both topic and
             #        content were specified.
 
-            (self.stream_topic, self.stream_content) = streamMsgs
-            if self.stream_topic is None:
-                self.stream_topic = STREAM_TOPIC
+            (stream_topic, self.stream_content) = streamMsgs
+            if stream_topic is not None:
+                self.stream_topic = stream_topic
             
             # Create a message that one can have sent on demand
             # by sending a SIGUSR1 to the server, or using
@@ -249,7 +255,49 @@ class OnDemandPublisher(threading.Thread):
             # Create a standard message with default topic/content:
             self.standard_stream_msg = self.createMessage()
 
-    def createMessage(self, topic=STREAM_TOPIC, msgLen=STANDARD_MSG_LENGTH, content=None):
+    @property
+    def echo_topic(self):
+        return self.echo_topic
+    
+    @echo_topic.setter
+    def echo_topic(self, new_echo_topic):
+        self.echo_topic = new_echo_topic
+
+    @property
+    def stream_topic(self):
+        return self.stream_topic
+    
+    @stream_topic.setter
+    def stream_topic(self, new_stream_topic):
+        self.stream_topic = new_stream_topic
+    
+    @property
+    def syntax_check_topic(self):
+        return self.syntax_check_topic
+    
+    @syntax_check_topic.setter
+    def syntax_check_topic(self, new_syntax_check_topic):
+        self.syntax_check_topic = new_syntax_check_topic
+        
+    @property
+    def one_shot_topic(self):
+        return self.one_shot_topic
+    
+    @one_shot_topic.setter
+    def one_shot_topic(self, new_one_shot_topic):
+        self.one_shot_topic = new_one_shot_topic
+        
+    @property
+    def standard_msg_len(self):
+        return self.standard_msg_len
+    
+    @standard_msg_len.setter
+    def standard_msg_len(self, new_standard_msg_len):
+        self.standard_msg_len = new_standard_msg_len
+    
+    
+
+    def createMessage(self, topic=None, msgLen=None, content=None):
         '''
         Returns a BusMessage whose content is the given length,
         and whose topicName is the given topic.
@@ -264,6 +312,12 @@ class OnDemandPublisher(threading.Thread):
             message instance will be the MD5 of the content.
         :rtype: BusMessage
         '''
+    
+        if topic is None:
+            topic = self.stream_topic
+            
+        if msgLen is None:
+            msgLen = self.standard_msg_len 
     
         if content is None:    
             content = bytearray()
@@ -288,7 +342,7 @@ class OnDemandPublisher(threading.Thread):
         Given a BusMessage instance, determine whether it contains 
         all necessary attributes: ID, and time. This method 
         is a callback for topic specified in module variable
-        SYNTAX_TOPIC. Constructs a string that lists any
+        self.syntaxTopic. Constructs a string that lists any
         errors or warnings, and returns that string as a
         synchronous response.
         
@@ -420,7 +474,7 @@ class OnDemandPublisher(threading.Thread):
                 self.sendMsg = False
             continue
         
-        self.testBus.unsubscribeFromTopic(ECHO_TOPIC)
+        self.testBus.unsubscribeFromTopic(self.echo_topic)
         self.testBus.close()
 
 class MessageOutStreamer(threading.Thread):
