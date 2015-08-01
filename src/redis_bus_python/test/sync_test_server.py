@@ -72,9 +72,9 @@ class ReceptionTester(threading.Thread):
         self.testBus.close()
 
 if __name__ == '__main__':
-    echoServer = ReceptionTester(beSynchronous=True)
-    signal.signal(signal.SIGINT, echoServer.stop)
-    echoServer.start()
+    testServer = ReceptionTester(beSynchronous=True)
+    signal.signal(signal.SIGINT, testServer.stop)
+    testServer.start()
     # Pause till cnt-C causes stop() to be called on the thread:
     signal.pause()
-    echoServer.join()
+    testServer.join()
