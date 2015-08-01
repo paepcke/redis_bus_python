@@ -7,16 +7,13 @@ import Queue
 import collections
 import threading
 import time
-import timeit
-import traceback
 
 from redis_bus_python.bus_message import BusMessage
-from redis_bus_python.redis_lib._compat import iteritems, imap, iterkeys, \
+from redis_bus_python.redis_lib._compat import iteritems, iterkeys, \
     nativestr
 from redis_bus_python.redis_lib.connection import Connection
-from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError, \
-    ResponseError
-from redis_bus_python.redis_lib.utils import list_or_args
+
+from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError
 
 
 class PubSubListener(threading.Thread):
@@ -30,13 +27,6 @@ class PubSubListener(threading.Thread):
     subscriptions (self.pattern).
 
     """
-    #********
-#     ream_cmd = """
-#     for _ in range(6):
-#         self.sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
-#     """
-    ream_time = 0.0
-    #********
     
     PUBLISH_MESSAGE_TYPES = ('message', 'pmessage')
     UNSUBSCRIBE_MESSAGE_TYPES = ('unsubscribe', 'punsubscribe')
@@ -552,14 +542,8 @@ class PubSubListener(threading.Thread):
             # Read and discard the returned status.
             # Same expected return format as the subscribe above:
     
-            #********
-            #PubSubListener.ream_time += timeit.timeit(stmt=PubSubListener.ream_cmd)
-            start_time = time.time()
             for _ in range(6):
                 sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
-            PubSubListener.ream_time += time.time() - start_time
-            #********
-                
             
             # The response_arr now has ['message', <channel>, <payload>].
             # Return the payload: 

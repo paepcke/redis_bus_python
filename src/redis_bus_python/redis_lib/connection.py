@@ -13,12 +13,18 @@ import threading
 import time
 import warnings
 
+
+
 from redis_bus_python.redis_lib._compat import b, imap, unicode, bytes, long, \
     nativestr, basestring, iteritems, LifoQueue, Empty, Full, urlparse, parse_qs, \
     unquote
+    
 from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
-    TimeoutError, BusyLoadingError, ResponseError, InvalidResponse, \
-    AuthenticationError, NoScriptError, ExecAbortError, ReadOnlyError #@UnusedImport
+    TimeoutError, ResponseError, InvalidResponse, AuthenticationError
+
+# Redis library exception types not currently used in this module: 
+# from redis_bus_python.redis_lib.exceptions import BusyLoadingError, NoScriptError, ExecAbortError, ReadOnlyError 
+    
 from redis_bus_python.redis_lib.parser import PythonParser, SYM_EMPTY, SYM_STAR, \
     SYM_CRLF, SYM_DOLLAR, BaseParser
 

@@ -6,9 +6,17 @@ Created on Jul 24, 2015
 
 from redis_bus_python.redis_lib._compat import byte_to_chr, nativestr
 
-from redis_bus_python.redis_lib.exceptions import AuthenticationError, \
-    NoScriptError, ExecAbortError, RedisError, TimeoutError, BusyLoadingError, \
-    ResponseError, ReadOnlyError #@UnusedImport
+from redis_bus_python.redis_lib.exceptions import NoScriptError, ExecAbortError, ReadOnlyError, \
+    ResponseError, BusyLoadingError
+    
+# Redis library exception types not currently used in this module: 
+# from redis_bus_python.redis_lib.exceptions import BusyLoadingError, NoScriptError, ExecAbortError, ReadOnlyError 
+    
+# from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
+#     TimeoutError, InvalidResponse, AuthenticationError \
+    
+
+    
 from redis_bus_python.redis_lib.exceptions import ConnectionError #@UnusedImport
 from redis_bus_python.redis_lib.exceptions import InvalidResponse #@UnusedImport
 from redis_bus_python.redis_lib.socket_reader import SocketLineReader

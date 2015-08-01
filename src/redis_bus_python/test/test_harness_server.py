@@ -20,9 +20,6 @@ import traceback
 
 from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
-from redis_bus_python.test.performance_test_echo_server import \
-    PerformanceTesterEchoServer
-
 
 # Topic on which echo server listens:
 ECHO_TOPIC = 'echo'
@@ -116,7 +113,7 @@ class OnDemandPublisher(threading.Thread):
     def __init__(self, serveEchos=True, 
                  listenOn=None, 
                  streamMsgs=False, 
-                 checkSyntax=False,
+                 checkSyntax=True,
                  oneShotMsg=None):
         '''
         Initialize the test harness server. 
@@ -378,7 +375,7 @@ class OnDemandPublisher(threading.Thread):
             self.startIdleTimer()
             return
         
-        if currTime - self.mostRecentRxTime <= PerformanceTesterEchoServer.MAX_IDLE_TIME:
+        if currTime - self.mostRecentRxTime <= OnDemandPublisher.MAX_IDLE_TIME:
             # Received msgs during more recently than idle time:
             self.startIdleTimer() 
             return
@@ -394,7 +391,7 @@ class OnDemandPublisher(threading.Thread):
         self.timer = self.startIdleTimer()
 
     def startIdleTimer(self):
-        threading.Timer(PerformanceTesterEchoServer.MAX_IDLE_TIME, functools.partial(self.resetEchoedCounter)).start()
+        threading.Timer(OnDemandPublisher.MAX_IDLE_TIME, functools.partial(self.resetEchoedCounter)).start()
 
     def stop(self, signum=None, frame=None):
         self.done = True
@@ -480,7 +477,7 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--echo', 
                         help="Echo messages arriving on topic '%s' as sychronous replies." % ECHO_TOPIC,
                         action='store_true',
-                        default=False)
+                        default=True)
     parser.add_argument('-s', '--streamMsgs', 
                         help="Send the same bus message over and over. Topic, or both,\n" +\
                              "topic and content may be provided. If content is omitted,\n" +\
@@ -494,7 +491,7 @@ if __name__ == '__main__':
                         help="Check syntax of messages arriving on topic '%s'; \n" % SYNTAX_TOPIC +\
                              "synchronously return result report.", 
                         action='store_true',
-                        default=False)
+                        default=True)
     parser.add_argument('-l', '--listenOn', 
                         help="Subscribe to given topic(s), and throw the messages away", 
                         dest='topic_to',
