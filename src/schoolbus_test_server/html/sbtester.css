@@ -1,0 +1,25 @@
+
+table.inputFields {
+    border-collapse: separate;
+    border-spacing: 10px 5px;
+	}
+
+hr.partial {width: 20%;
+			margin: 0px;
+			margin-top: 20px;
+			margin-bottom: 20px;
+	} 
+
+form.inputFields  { display: table;		 }
+p     { display: table-row;  }
+label { display: table-cell; 
+		padding-right: 10px;
+		vertical-align: center;
+		}
+input { display: table-cell;}
+
+legend {font-weight: bold; }
+
+textarea.content {width: 500px;
+		  	 	  height: 100px;
+				}

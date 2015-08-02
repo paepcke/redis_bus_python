@@ -205,6 +205,8 @@ class OnDemandPublisher(threading.Thread):
             self.testBus.subscribeToTopic(self.echo_topic, functools.partial(self.messageReceiver), threaded=False)
 
         if listenOn is not None:
+            # Array of topics to listen to (and discard): 
+            self.listen_on = listenOn
             # If we are to listen to some (additional) topic(s),
             # on which no action is taken, subscribe to it/them now:
             for topic in listenOn:

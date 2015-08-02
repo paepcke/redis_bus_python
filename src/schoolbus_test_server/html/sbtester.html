@@ -1,0 +1,69 @@
+<!doctype>
+<html>
+	<head>
+		<link rel="stylesheet" type="text/css" href="sbtester.css">
+	</head>
+<body>
+<h1>SchoolBus Test Server</h1>
+<form class=inputFields>
+	<fieldset>
+		<legend>Server run controls</legend>
+		<input type="button" value="Start Server" id="startServerBtn"> 	
+		<input type="button" value="Stop Server" id="stopServerBtn">
+	</fieldset>
+	<br>
+	<fieldset>
+		<legend>Settings</legend>
+		<p>
+			<label for="standardLen">Length of random strings:</label>
+			<input type="text" id="standardLen" placeholder="100">
+		</p>
+			<hr class="partial">
+		<p>
+			<label for="oneShotTopic">One-shot topic:</label>
+			<input type="text" id="oneShotTopic" placeholder="test">
+		</p>
+		<p>
+			<label for="oneShotContent">One-shot content:</label>
+			<textarea class="content" id="oneShotContent" placeholder="random string"></textarea>
+		</p>
+			<hr class="partial">
+		<p>
+			<label for="streamTopic">Message stream topic:</label>
+			<input type="text" id="streamTopic" placeholder="test">
+		</p>
+		<p>
+			<label for="streamContent">Message stream content:</label>
+			<textarea class="content" id="streamContent" placeholder="random string"></textarea>
+		</p>
+			<hr class="partial">
+		<p>
+			<label for="syntaxTopic">Syntax checking topic:</label>
+			<input type="text" id="syntaxTopic" placeholder="bus_syntax">
+		</p>
+		<p>
+			<label for="discardTopics">Topics to listen and drop:</label>
+			<input type="text" id="discardTopics">
+		</p>
+		
+	</fieldset>
+	<br>
+	<fieldset>
+		<legend>Services</legend>
+		<p>
+			<label for="stream">Continuously stream msgs:</label>
+			<input type="checkbox" id="stream">
+		</p>
+		<p>			
+			<label for="echo">Echo msgs:</label>
+			<input type="checkbox" id="echo" checked>
+		</p>			
+		<p>
+			<label for="syntaxCheck">Accept msg for syntax checking:</label>
+			<input type="checkbox" id="syntaxCheck" checked><br>
+		</p>
+	</fieldset>
+</form>
+
+</body>	
+</html>
