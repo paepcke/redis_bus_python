@@ -40,9 +40,9 @@ class BusTesterWebController(tornado.web.RequestHandler):
         
         # No HTML Parms? then 
         
-        for (parm_key, parm_value) in html_parms.items:
-            if parm_key == '':
-                pass
+#         for (parm_key, parm_value) in html_parms.items:
+#             if parm_key == '':
+#                 pass
 
     @classmethod  
     def makeApp(self):
