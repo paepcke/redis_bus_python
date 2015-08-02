@@ -258,6 +258,10 @@ class OnDemandPublisher(threading.Thread):
             self.standard_stream_msg = self.createMessage()
 
     @property
+    def running(self):
+        return self.done
+
+    @property
     def echo_topic(self):
         return self.echo_topic
     

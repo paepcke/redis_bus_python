@@ -35,8 +35,14 @@ class BusTesterWebController(tornado.web.RequestHandler):
         self.test_servers = {}
 
     def get(self):
-        getParms = self.request.arguments
-        self.write("<html><body>GET method was called: %s.</body></html>" %str(getParms))
+        html_parms = self.request.arguments
+        self.write("<html><body>GET method was called: %s.</body></html>" %str(html_parms))
+        
+        # No HTML Parms? then 
+        
+        for (parm_key, parm_value) in html_parms.items:
+            if parm_key == '':
+                pass
 
     @classmethod  
     def makeApp(self):
