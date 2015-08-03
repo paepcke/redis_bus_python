@@ -25,7 +25,6 @@ import types
 
 from bus_message import BusMessage
 from redis_bus_python import redis_lib
-from schoolbus_exceptions import SyncCallTimedOut
 
 
 class BusAdapter(object):

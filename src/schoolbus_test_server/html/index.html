@@ -1,0 +1,75 @@
+<!doctype>
+<html>
+	<head>
+		<meta charset="utf-8"/>
+		<link rel="stylesheet" type="text/css" href="sbtester.css">
+	</head>
+<body>
+<h1>SchoolBus Test Server</h1>
+<form class=inputFields action="http://192.168.0.19:8000/bus" method="get">
+	<fieldset>
+		<legend>Server run controls</legend>
+		<input type="button" class="one" value="Start Server" id="startServerBtn" name="startServerBtn"> 	
+		<input type="button" class="one" value="Stop Server" id="stopServerBtn" name="stopServerBtn">
+	</fieldset>
+	<br>
+	<fieldset>
+		<legend>Settings</legend>
+		<p class="one">
+			<label for="standardLen">Length of random strings:</label>
+			<input type="text" id="standardLen" name="standardLen" placeholder="100">
+		</p>
+
+		<p class="two">
+			<label for="oneShotTopic">One-shot topic:</label>
+			<input type="text" id="oneShotTopic" name="oneShotTopic" placeholder="test">
+		</p>
+		<p class="two">
+			<label for="oneShotContent">One-shot content:</label>
+			<textarea class="content" id="oneShotContent" name="oneShotContent" placeholder="random string"></textarea>
+		</p>
+
+		<p class="one">
+			<label for="streamTopic">Message stream topic:</label>
+			<input type="text" id="streamTopic" name="streamTopic" placeholder="test">
+		</p>
+		<p class="one">
+			<label for="streamContent">Message stream content:</label>
+			<textarea class="content" id="streamContent" name="streamContent" placeholder="random string"></textarea>
+		</p>
+
+		<p class="two">
+			<label for="syntaxTopic">Syntax checking topic:</label>
+			<input type="text" id="syntaxTopic" name="syntaxTopic" placeholder="bus_syntax">
+		</p>
+		<p class="two">
+			<label for="discardTopics">Topics to listen and drop:</label>
+			<input type="text" id="discardTopics" name="discardTopics">
+		</p>
+		
+	</fieldset>
+	<br>
+	<fieldset>
+		<legend>Services</legend>
+		<p>
+			<label for="stream">Continuously stream msgs:</label>
+			<input type="checkbox" id="stream" name="stream">
+		</p>
+		<p>			
+			<label for="echo">Echo msgs:</label>
+			<input type="checkbox" id="echo" name="echo" checked>
+		</p>			
+		<p>
+			<label for="syntaxCheck">Accept msg for syntax checking:</label>
+			<input type="checkbox" id="syntaxCheck" name="syntaxCheck" checked><br>
+		</p>
+	</fieldset>
+	<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
+</form>
+
+
+<script src="sbtester.js"></script>
+
+
+</body>	
+</html>

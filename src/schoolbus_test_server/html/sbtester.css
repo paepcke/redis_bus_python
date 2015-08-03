@@ -1,0 +1,41 @@
+
+body { background-color : #b0c4de}
+
+table.inputFields {
+    border-collapse: separate;
+    border-spacing: 10px 5px;
+	}
+
+hr.partial {width: 20%;
+			margin: 0px;
+			margin-top: 20px;
+			margin-bottom: 20px;
+	} 
+
+form.inputFields  { display: table;		 }
+
+p     { display: table-row;  }
+p.one { background-color: #5794ad; }
+p.two { background-color: #1580ad; }
+
+label { display: table-cell; 
+		padding-right: 10px;
+		vertical-align: middle;
+		}
+
+input { display: table-cell;
+		background-color : #cacaca; }
+	  }
+legend {font-weight: bold; }
+
+textarea.content {width: 500px;
+		  	 	  height: 100px;
+		  	 	  background-color: #cacaca;
+				}
+
+input[type=button] { background-color: #5794ad;
+					 color: white; 
+				   }				
+input[type=submit] { background-color: #5794ad;
+					 color: white; 
+				   }
