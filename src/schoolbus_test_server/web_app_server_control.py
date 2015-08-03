@@ -7,6 +7,9 @@ Created on Aug 1, 2015
 import tornado.ioloop
 import tornado.web
 
+from redis_bus_python.redis_bus import OnDemandPublisher
+
+
 BUS_TESTER_SERVER_PORT = 8000
 
 class BusTesterWebController(tornado.web.RequestHandler):
@@ -36,13 +39,24 @@ class BusTesterWebController(tornado.web.RequestHandler):
 
     def get(self):
         html_parms = self.request.arguments
-        self.write("<html><body>GET method was called: %s.</body></html>" %str(html_parms))
+        self.write("<html><body>GET method was called: %s.<br>" %str(html_parms))
+        response_dict = {}
         
-        # No HTML Parms? then 
+        for (parm_key, parm_value) in html_parms.items:
+            if parm_key == 'server':
+                if parm_value == ['ON']:
+                    self.startServer()
+                else:
+                    self.stopServer()
+                response_dict['server'] = parm_value[0]
         
-#         for (parm_key, parm_value) in html_parms.items:
-#             if parm_key == '':
-#                 pass
+        self.write(response_dict)
+        self.write("</body></html>")
+
+
+    def startServer(self):
+        self.test_servers[self] = OnDemandPublisher()
+        self.write('')
 
     @classmethod  
     def makeApp(self):
@@ -50,9 +64,13 @@ class BusTesterWebController(tornado.web.RequestHandler):
         Create the tornado application, making it 
         callable via http://myServer.stanford.edu:<port>/bus
         '''
-        application = tornado.web.Application([
-            (r"/bus", BusTesterWebController),
-            ])
+
+        handlers = [
+            (r"/bus/controller", BusTesterWebController),
+            (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
+            ]
+
+        application = tornado.web.Application(handlers)
         return application
 
 if __name__ == "__main__":

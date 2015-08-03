@@ -2,9 +2,9 @@ function SbTesterControl() {
 
 	/* ------------------------------------ Instance Vars ------------------*/
 
-	var originHost = null;
+	var originHost = '192.168.0.19';
 	var originPort = 8000;
-	var originDir  = 'bus';
+	var originDir  = 'bus/controller';
 	var getCmds = {"startServerBtn" : "startServer",
 				   "stopServerBtn"  : "stopServer",
 				   "standardLen" 	: "strLen",
@@ -20,48 +20,54 @@ function SbTesterControl() {
 	/* ------------------------------------ Methods ------------------------*/
 	
 	this.construct = function() {
-		originHost = window.location.host;
+		if (window.location.host.length != 0) {
+			originHost = window.location.host;
+		};
 	}();
 	
-	var startServer = function() {
+	this.startServer = function() {
 		httpGet({'server' : 'on'});
 	}
 
-	var startServer = function() {
+	this.stopServer = function() {
 		httpGet({'server' : 'off'});
 	}
 	
 	var httpGet = function (parmsDict) {
-		paramStr = '';
-		for (var prop in Object.getOwnPropertyNames(parmsDict)) {
-			if (paramDict[prop] === undefined) {
+		parmStr = '';
+		parmNames =  Object.getOwnPropertyNames(parmsDict);
+		for (var indx=0; indx < parmNames.length; indx++) {
+			propName = parmNames[indx]
+			if (parmsDict[propName] === undefined) {
 				// Make HTML parm val an underscore to coax
 				// tornado at the server to include the prop
 				// name in its dict:
-				paramStr += '&' + prop + '=_'
+				parmStr += '&' + propName + '=_'
 				}
 			else {
-				paramStr += '&' + prop + '=' + paramDict[prop];
+				parmStr += '&' + propName + '=' + parmsDict[propName];
 			}
 		}
 		// Remove the leading '&' from the GET param str:
-		if (paramStr[0] === '&') {
-			paramStr = paramStr[1];
+		if (parmStr[0] === '&') {
+			parmStr = parmStr.slice(1);
 		}
 		
-		theUrl = 'http://' + originHost + ':' + originPort + '/' + originDir + '?' + paramStr
+		theUrl = 'http://' + originHost + '/' + originDir + '?' + parmStr
 	    var xmlHttp = new XMLHttpRequest();
 	    xmlHttp.open( "GET", theUrl, false );
 	    xmlHttp.send( null );
 	    //***********
-	    console.log('Ret: ' + responseText);
+	    console.log('Ret: ' + xmlHttp.responseText);
 	    //***********
 	    return xmlHttp.responseText;
 	}	
 }
 
-document.getElementById('startServerBtn').addEventListener('click', SbTesterControl.startServer);
-document.getElementById('stopServerBtn').addEventListener('click', SbTesterControl.stopServer);
-//document.getElementById('submitBtn').addEventListener('click', SbTesterControl.stopServer);
+var sbTesterControl = new SbTesterControl();
 
-new SbTesterControl();
+
+document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
+document.getElementById('stopServerBtn').addEventListener('click', sbTesterControl.stopServer);
+//document.getElementById('submitBtn').addEventListener('click', sbTesterControl.stopServer);
+
