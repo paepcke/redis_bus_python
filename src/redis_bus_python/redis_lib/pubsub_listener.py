@@ -65,7 +65,7 @@ class PubSubListener(threading.Thread):
         self.shard_hint = shard_hint
         self.ignore_subscribe_messages = ignore_subscribe_messages
         self.done = False
-        self.paused = False
+        self._paused = False
         self.connection = None
         
         # we need to know the encoding options for this connection in order
@@ -88,13 +88,13 @@ class PubSubListener(threading.Thread):
         self.start()
 
     def pause_in_traffic(self):
-        self.paused = True
+        self._paused = True
         # Get the run() loop out of its
         # hanging call to handle_message():
         self.execute_command('PING')
 
     def continue_in_traffic(self):
-        self.paused = True
+        self._paused = True
 
     def stop(self):
         if self.done:
@@ -114,7 +114,7 @@ class PubSubListener(threading.Thread):
         
         try:
             while not self.done:
-                if self.paused:
+                if self._paused:
                     # For testing we sometimes pause reading from
                     # the socket so that other threads can read
                     # it instead:
