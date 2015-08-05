@@ -2,6 +2,13 @@
 Created on Aug 1, 2015
 
 @author: paepcke
+
+TODO:
+    o In JS: in return JSON, find error key if present,
+       and do an alert.
+    o In JS: if no error, update all the text/checkbox fields.
+    
+
 '''
 
 import json
@@ -46,10 +53,17 @@ class BusTesterWebController(tornado.web.RequestHandler):
         # UID --> (OnDemandPubliser, kill_time)
         self.test_servers = {}
 
-    def get(self):
+    def post(self):
         
-        html_parms = self.request.arguments
-        self.write("<html><body>GET method was called: %s.<br>" %str(html_parms))
+        # Get the JSON in the post body, and replace unicode
+        # with str types:
+        
+        html_parms = self.byteify(json.loads(self.request.body))
+
+        #********
+        # Echo the HTML parameters:
+        # self.write("<html><body>GET method was called: %s.<br>" %str(html_parms))
+        #********
         response_dict = {}
         try:
             for (parm_key, parm_value) in html_parms.items():
@@ -73,37 +87,20 @@ class BusTesterWebController(tornado.web.RequestHandler):
                     else:
                         self.return_error(response_dict, "Server command must be 'on', 'off', or '%s'" % BusTesterWebController.REQUEST_STR)
                         return
-                
-                elif parm_key == 'pauseStream':
-                    # Pause, or unpause the message stream:
-                    
-                    # Normalize up/lower case:
-                    new_stream_state = self.ensure_lower_non_array(parm_value)
-                                        
-                    curr_pause_state = self.my_server.stream_paused
-                    
-                    if new_stream_state == BusTesterWebController.REQUEST_STR:
-                        # Just wants to know current state:
-                        response_dict['pauseStream'] = curr_pause_state
-                    else:
-                        # Wants to set state
-                        
-                        # Save the caller's 'ON'/'on'/'OFF'/'off':
-                        orig_stream_state_req = new_stream_state
-                        
-                        # Turn new state into boolean:
-                        new_stream_state = True if new_stream_state == 'on' else False
-                        
-                        # Change the stream state:
-                        self.set_stream_paused_state(new_stream_state)
-                        # Report success:
-                        response_dict['pauseStream'] = orig_stream_state_req
                 else:
                     # One of the server parameter settings/state-queries: topics or contents, etc.:
                     response_dict = self.get_or_set_server_parm(parm_key, parm_value, response_dict)
-    
-            self.write(json.dumps(response_dict))
-            self.write("</body></html>")
+            
+            # Send a dict with keys being the HTML parameter
+            # names, and values being the current server
+            # parameter values:
+            self.finish(json.dumps(response_dict))
+            
+            #******
+            # If a real HTML page were to be sent,
+            # we'd close it out here:
+            # self.write("</body></html>")
+            #******
         except ValueError:
             # Was handled in one of the functions called above:
             return 
@@ -118,19 +115,18 @@ class BusTesterWebController(tornado.web.RequestHandler):
 
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str
-        self.write(json.dumps(response_dict))
-        self.write(BusTesterWebController.HTML_CLOSE)
+        self.finish(json.dumps(response_dict))
 
     def get_or_set_server_parm(self, parm_name, parm_val, response_dict):
         
         # Most parameters are singleton arrays.
         # Make those into non-arrays:
-        if len(parm_val) == 1:
+        if type(parm_val) == list and len(parm_val) == 1:
             parm_val = parm_val[0]
             
         try:
             # Is this a request for the current value of the server setting?
-            if parm_val == BusTesterWebController.REQUEST_STR and self.my_server is not None:
+            if len(parm_val) == 0 and self.my_server is not None:
                 # Return current current value:
                 response_dict[parm_name] =  self.my_server[parm_name]
     
@@ -139,8 +135,11 @@ class BusTesterWebController(tornado.web.RequestHandler):
                 self.my_server[parm_name] = parm_val
                 response_dict[parm_name] =  parm_val
             else:
-                # It's a request for current value, but no server is running:
-                response_dict[parm_name] =  BusTesterWebController.REQUEST_STR
+                # It's a request for current value, but no server is running;
+                # report back to the browser, and close the connection:
+                self.return_error('SchoolBus server is not running.')
+                # The following will be ignored in the POST method:
+                raise ValueError('SchoolBus server is not running.')
         except KeyError:
             self.return_error(response_dict, 'Server parameter %s does not exist' % parm_name)
             raise ValueError('Server parameter %s does not exist' % parm_name)
@@ -156,7 +155,7 @@ class BusTesterWebController(tornado.web.RequestHandler):
         # the standard topic/content:
         self.test_servers[self] = OnDemandPublisher(streamMsgs=(None,None))
         # Before starting the server, pause the message streaming server:
-        self.set_stream_paused_state(True)
+        self.test_servers[self].streaming = False
         self.test_servers[self].start()
         return self.test_servers[self]
         
@@ -176,16 +175,6 @@ class BusTesterWebController(tornado.web.RequestHandler):
             return self.test_servers[self].running
         except Exception:
             return False 
-
-    def set_stream_paused_state(self, new_state):
-        '''
-        Pause or unpause streaming of msgs by the 
-        schoolbus tester.
-        
-        :param new_state: True or False
-        :type new_state: string
-        '''
-        self.my_server.stream_paused = new_state
         
 
     def ensure_lower_non_array(self, val):
@@ -195,6 +184,23 @@ class BusTesterWebController(tornado.web.RequestHandler):
             new_val = val.lower()
         return new_val
         
+    def byteify(self, the_input):
+        '''
+        Turn unicode buried in data structures
+        to str types:
+        
+        :param the_input: data structure to convert
+        :type the_input: <any>
+        '''
+        if isinstance(the_input, dict):
+            return {self.byteify(key):self.byteify(value) for key,value in the_input.iteritems()}
+        elif isinstance(the_input, list):
+            return [self.byteify(element) for element in the_input]
+        elif isinstance(the_input, unicode):
+            return the_input.encode('utf-8')
+        else:
+            return the_input
+
 
     @classmethod  
     def makeApp(self):

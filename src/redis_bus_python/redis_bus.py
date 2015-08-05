@@ -278,6 +278,9 @@ class BusAdapter(object):
         '''
         return self.pub_sub.channels.keys() + self.pub_sub.patterns.keys()
         
+    def subscribedTo(self, topic):
+        return topic in self.mySubscriptions()
+        
     def close(self):
         for subscription in self.mySubscriptions():
             self.unsubscribeFromTopic(subscription)

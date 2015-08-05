@@ -148,7 +148,7 @@ class OnDemandPublisher(threading.Thread):
 #         sys.exit()
         #***********
         
-        self.serveEchos = serveEchos
+        self._serveEchos = serveEchos
         
         self.daemon = True
         self.testBus = BusAdapter()
@@ -206,10 +206,8 @@ class OnDemandPublisher(threading.Thread):
         # with each message:
 
         if serveEchos:
-            # Have incoming messages delivered to messageReceiver() not
-            # via a queue, but by direct call from the library:
-            self.testBus.subscribeToTopic(self._echo_topic, functools.partial(self.messageReceiver), threaded=False)
-
+            self.serve_echo = True
+        
         if listenOn is not None:
             # Array of topics to listen to (and discard): 
             # If we are to listen to some (additional) topic(s),
@@ -217,7 +215,7 @@ class OnDemandPublisher(threading.Thread):
             self['discardTopics'] = listenOn
 
         if checkSyntax:
-            self.testBus.subscribeToTopic(self.syntax_check_topic, functools.partial(self.syntaxCheckReceiver))
+            self.check_syntax = True
             
         self.interruptEvent = threading.Event()
         
@@ -277,6 +275,20 @@ class OnDemandPublisher(threading.Thread):
     def echo_topic(self, new_echo_topic):
         self._echo_topic = new_echo_topic
 
+    @property
+    def serve_echo(self):
+        return self._serveEchos
+
+    @serve_echo.setter
+    def serve_echo(self, do_serve):
+        if do_serve:
+            # Have incoming messages delivered to messageReceiver() not
+            # via a queue, but by direct call from the library:
+            self.testBus.subscribeToTopic(self.echo_topic, functools.partial(self.messageReceiver), threaded=False)
+            self._serveEchos = True
+        else:
+            self.testBus.unsubscribeFromTopic(self.echo_topic)
+            self._serveEchos = False
 
     @property
     def stream_topic(self):
@@ -295,14 +307,16 @@ class OnDemandPublisher(threading.Thread):
         self.msg_streamer.change_stream_content(new_stream_content)
 
     @property
-    def stream_paused(self):
-        return self.msg_streamer.paused
+    def streaming(self):
+        return not self.msg_streamer.paused
     
-    @stream_paused.setter
-    def stream_paused(self, new_state):
-        if not (new_state == False or new_state == True):
-            raise ValueError('New state for stream_paused must be True or False')
-        self.msg_streamer.pause(new_state)
+    @streaming.setter
+    def streaming(self, should_stream):
+        if not (should_stream == False or should_stream == True):
+            raise ValueError('New state for streaming must be True or False')
+
+        should_pause = not should_stream
+        self.msg_streamer.pause(should_pause)
 
     @property
     def one_shot_topic(self):
@@ -328,7 +342,20 @@ class OnDemandPublisher(threading.Thread):
     @syntax_check_topic.setter
     def syntax_check_topic(self, new_syntax_check_topic):
         self._syntax_check_topic = new_syntax_check_topic
-        
+
+    @property
+    def check_syntax(self):
+        return self._checkSyntax
+
+    @check_syntax.setter
+    def check_syntax(self, do_check):
+        if do_check:
+            self.testBus.subscribeToTopic(self.syntax_check_topic, functools.partial(self.syntaxCheckReceiver))
+            self._checkSyntax = True
+        else:
+            self.testBus.unsubscribeFromTopic(self.syntax_check_topic)
+            self._checkSyntax = False
+
     @property
     def standard_msg_len(self):
         return self._standard_msg_len
@@ -340,6 +367,9 @@ class OnDemandPublisher(threading.Thread):
     def __getitem__(self, item):
         if item == 'echoTopic':
             return self.echo_topic
+
+        elif item == 'echo':
+            self.testBus.subscribedTo(self.echoTopic)
         
         elif item == 'streamTopic':
             return self.stream_topic
@@ -360,6 +390,10 @@ class OnDemandPublisher(threading.Thread):
         elif item == 'syntaxTopic':
             return self.syntax_check_topic
         
+        elif item == 'chkSyntax':
+            self.testBus.subscribedTo(self.syntaxTopic)
+
+        
         elif item == 'discardTopics':
             return self.listen_on
         
@@ -369,6 +403,9 @@ class OnDemandPublisher(threading.Thread):
     def __setitem__(self, item, new_val):
         if item == 'echoTopic':
             self.echo_topic = new_val
+            
+        elif item == 'echo':
+            self.serve_echo = new_val
 
         elif item == 'streamTopic':
             self.stream_topic = new_val
@@ -388,6 +425,9 @@ class OnDemandPublisher(threading.Thread):
             
         elif item == 'syntaxTopic':
             self.syntax_check_topic = new_val
+            
+        elif item == 'chkSyntax':
+            self.check_syntax = new_val
             
         elif item == 'discardTopics':
             # Unsubscribe from all topics:
@@ -497,7 +537,7 @@ class OnDemandPublisher(threading.Thread):
         self.mostRecentRxTime = time.time()
         self.printedResetting = False
         
-        if self.serveEchos:
+        if self.serve_echos:
             # Create a message with the same content as the incoming
             # message, timestamp the new message, and publish it
             # on the response topic (i.e. tmp.<msgId>):
@@ -777,7 +817,7 @@ if __name__ == '__main__':
                                    )
     if streaming:
         # Streaming starts in a _paused state; let it rip:
-        testServer.stream_paused = False
+        testServer.streaming = False
         
     print('Started services: %s; cnt-C to stop...' % ', '.join(services_to_start))
          

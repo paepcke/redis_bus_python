@@ -6,7 +6,7 @@
 	</head>
 <body>
 <h1>SchoolBus Test Server</h1>
-<form class=inputFields action="http://192.168.0.19:8000/bus" method="get">
+<form class=inputFields id=serverParms>
 	<fieldset>
 		<legend>Server run controls</legend>
 		<input type="button" class="one" value="Start Server" id="startServerBtn" name="startServerBtn"> 	
@@ -16,8 +16,8 @@
 	<fieldset>
 		<legend>Settings</legend>
 		<p class="one">
-			<label for="standardLen">Length of random strings:</label>
-			<input type="text" id="standardLen" name="standardLen" placeholder="100">
+			<label for="strLen">Length of random strings:</label>
+			<input type="text" id="strLen" name="strLen" placeholder="100">
 		</p>
 
 		<p class="two">
@@ -60,12 +60,12 @@
 			<input type="checkbox" id="echo" name="echo" checked>
 		</p>			
 		<p>
-			<label for="syntaxCheck">Accept msg for syntax checking:</label>
-			<input type="checkbox" id="syntaxCheck" name="syntaxCheck" checked><br>
+			<label for="chkSyntax">Accept msg for syntax checking:</label>
+			<input type="checkbox" id="chkSyntax" name="chkSyntax" checked><br>
 		</p>
 	</fieldset>
-	<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
 </form>
+<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
 
 
 <script src="sbtester.js"></script>

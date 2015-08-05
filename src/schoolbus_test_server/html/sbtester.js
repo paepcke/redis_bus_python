@@ -2,64 +2,65 @@ function SbTesterControl() {
 
 	/* ------------------------------------ Instance Vars ------------------*/
 
-	var originHost  = '192.168.0.19';
+	var originHost  = 'localhost';
 	var originPort  = 8000;
-	var REQUEST_STR = '_';
+	// String that shows up in 
 	var originDir   = 'bus/controller';
-	var getCmds = {"startServerBtn" : "server",
-				   "stopServerBtn"  : "server",
-				   "pauseStreamBtn" : "pauseStream", 
-				   "standardLen" 	: "strLen",
-				   "oneShotTopic"   : "oneShotTopic",
-				   "oneShotContent" : "oneShotContent",
-				   "streamTopic"	: "streamTopic",
-				   "streamContent"	: "streamContent",
-				   "syntaxTopic"	: "syntaxTopic",
-				   "discardTopics"	: "discardTopics"   
-					};
-	var reqTemplate = {'server'        : REQUEST_STR,
-					   'pauseStream'   : REQUEST_STR,
-					   'oneShotTopic'  : REQUEST_STR,
-					   'oneShotContent': REQUEST_STR,
-					   'streamTopic'   : REQUEST_STR,
-					   'streamContent' : REQUEST_STR,
-					   'syntaxTopic'   : REQUEST_STR,
-					   'discardTopics' : REQUEST_STR
-	}
 	
+	var chkBoxes = ['stream', 'echo', 'chkSyntax'];
+
+	// Will be filled by constructor with 
+	// all UI elements as keys, and empty strings
+	// as values. When a request for a param change
+	// on the server is made, just that parameter
+	// value is modified in reqTemplate:
+	var reqTemplate = {};
 	
 	/* ------------------------------------ Methods ------------------------*/
 	
 	this.construct = function() {
+		// Note URL of the host that pulled this JS file
+		// to its browser:
 		if (window.location.host.length != 0) {
 			originHost = window.location.host;
 		};
+		
+		var serverParmForm = document.forms['serverParms'];
+		for (var i=0; i < serverParmForm.length; i++) {
+			widget = serverParmForm[i];
+			if (widget.type == 'text' ||
+				widget.type == 'checkbox' ||
+				widget.type == 'radio') {
+			reqTemplate[widget.id] = '';
+			}
+		}
 	}();
 	
-	
-	
 	this.startServer = function() {
-		httpGet({'server' : 'on'});
+		sendReq({'server' : 'on'});
 	}
 
 	this.stopServer = function() {
-		httpGet({'server' : 'off'});
+		sendReq({'server' : 'off'});
 	}
 	
 	this.submit = function() {
-		parmsDict = {'strLen' : document.getElementById('standardLen').innerHTML,
+		parmsDict = {'strLen' : document.getElementById('strLen').innerHTML,
 					 'oneShotTopic' : document.getElementById('oneShotTopic').innerHTML,
 					 'oneShotContent' : document.getElementById('oneShotContent').innerHTML,
 					 'streamTopic' : document.getElementById('streamTopic').innerHTML,
 					 'streamContent' : document.getElementById('streamContent').innerHTML,
 					 'syntaxTopic' : document.getElementById('syntaxTopic').innerHTML,
 					 'discardTopics' : document.getElementById('discardTopics').innerHTML,
-					 'pauseStream' : ! document.getElementById('stream').checked,
+					 
+					 'stream' : document.getElementById('stream').checked ? 'True' : 'False',
+					 'echo' : document.getElementById('echo').checked ? 'True' : 'False',
+					 'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False',
 		}
-		
+		sendReq(parmsDict);
 	}
 	
-	var httpGet = function (parmsDict) {
+	var sendReq = function (parmsDict) {
 		
 		// Names of all the server parameters to *change*:
 		reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
@@ -76,39 +77,45 @@ function SbTesterControl() {
 			newReqDict[reqKeysToChange[i]] = parmsDict[reqKeysToChange[i]];
 		}
 
-		// Build the GET string:
-		getStr = buildGetStr(newReqDict);
+		theUrl = 'http://' + originHost + '/' + originDir;
 
-		theUrl = 'http://' + originHost + '/' + originDir + getStr;
 	    var xmlHttp = new XMLHttpRequest();
-	    xmlHttp.open( "GET", theUrl, false );
-	    xmlHttp.send( null );
+	    xmlHttp.open( "POST", theUrl, false );
+	    xmlHttp.send( JSON.stringify( newReqDict ) );
+	    
 	    //***********
 	    console.log('Ret: ' + xmlHttp.responseText);
 	    //***********
 	    return xmlHttp.responseText;
 		
 	}
-	
-	var buildGetStr = function(reqDict) {
-		if (Object.keys(reqDict).length == 0) {
-			return reqDict;
-		}
-		getStr = '';
-		reqKeys = Object.getOwnPropertyNames(reqDict);
-		for (var i=0; i<reqKeys.length; i++) {
-			reqKey = reqKeys[i];
-			reqVal = reqDict[reqKey];
-			if (reqVal == REQUEST_STR) {
-				getStr += '&' + reqKey + '=_'
+
+	var processServerResponse = function(respDict) {
+		/**
+		 * For each key/value pair in respDict, looks up the
+		 * UI widget ID that holds the respective parameter
+		 * value (i.e. text field, checkbox...). Modifies 
+		 * those values to match the received respDict.
+		 * 
+		 * :param respDict: keys are names of server parameters.
+		 * :type respDict: {str : str}
+		 */
+		
+		serverParmNames = Object.getOwnPropertyNames(respDict);
+		for (var i=0; i<serverParmNames.length; i++) {
+			parmName = serverParmNames[i];
+			newVal = respDict[parmName];
+			
+			// If value is for a checkbox, turn the server-returned
+			// 'True', 'False' into lower case, and use the proper
+			// checkbox setting syntax:
+			if (chkBoxes.indexOf(parmName) != -1) {
+				// It's a checkbox:
+				document.getElementById(parmName).checked = newVal.toLowerCase();
+			} else {
+				document.getElementById(parmName).innerHTML = newVal;
 			}
-			else {
-				getStr += '&' + reqKey + '=' + reqVal
-			}
 		}
-		// Remove the leading '&' and replace it with a '?':
-		getStr = '?' + getStr.slice(1);
-		return getStr;
 	}
 	
 	var cloneReqTemplate = function() {
