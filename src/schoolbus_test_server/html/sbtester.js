@@ -39,6 +39,7 @@ function SbTesterControl() {
 			reqTemplate[widget.id] = '';
 			}
 		}
+		
 	}();
 	
 	this.startServer = function() {
@@ -140,7 +141,9 @@ function SbTesterControl() {
 			
 			if (widget.type == 'checkbox') {
 				// It's a checkbox; values will be 'True' or 'False':
-				document.getElementById(parmName).checked = (newVal === 'True');
+				document.getElementById(parmName).checked = newVal === true;
+				
+		
 			} else if ((widget.type == 'text') ||
 					   (widget.type == 'textarea')) {
 				// 
@@ -217,6 +220,8 @@ function SbTesterControl() {
 
 var sbTesterControl = new SbTesterControl();
 
+// Fill in the fields with actual server parm values:
+sbTesterControl.submit();
 
 document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
 document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);

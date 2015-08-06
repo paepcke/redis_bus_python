@@ -1,17 +1,20 @@
+#!/usr/bin/env python
+
 '''
 Created on Aug 1, 2015
 
 @author: paepcke
 
 TODO:
-    o In JS: in return JSON, find error key if present,
-       and do an alert.
-    o In JS: if no error, update all the text/checkbox fields.
+    o Kill server after alloted time 
+    o JS: one-shot button
+    o Why web_app_server dies with lots of 'Submit Changes' clicking
     
 
 '''
 
 import json
+import threading
 import time
 import tornado.ioloop
 import tornado.web
@@ -21,7 +24,7 @@ from schoolbus_test_server import OnDemandPublisher
 
 
 BUS_TESTER_SERVER_PORT = 8000
-
+IN_REQUEST_LOCK = threading.Lock()
 
 class BusTesterWebController(tornado.web.RequestHandler):
     '''
@@ -51,11 +54,6 @@ class BusTesterWebController(tornado.web.RequestHandler):
     
     DEFAULT_TIME_TO_LIVE = 2.0 * 3600.0 # hrs * sec/hr
     
-    # String used by sbtester.js when requesting the
-    # current value of a quantity, rather than setting
-    # a new value:
-    REQUEST_STR = '_'
-    
     HTML_CLOSE = "</body></html>"
 
     def __init__(self, application, request, **kwargs):
@@ -69,10 +67,10 @@ class BusTesterWebController(tornado.web.RequestHandler):
         
         # This instance is created to serve one request
         # from a browser. If that browser never called
-        # before, my_server() will invent a UID,
+        # before, my_server() will invent a UUID,
         # create an OnDemandPublisher instance, and save
-        # it in the class var test_servers as value of the UID key. 
-        # If the browser called before, the request will include a UID
+        # it in the class var test_servers as value of the UUID key. 
+        # If the browser called before, the request will include a UUID
         # with which to retrieve the already existing OnDemandPublisher:
         
         self.test_server_id = None
@@ -140,7 +138,6 @@ class BusTesterWebController(tornado.web.RequestHandler):
             raise
             #*********
             return
-
 
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str

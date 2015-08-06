@@ -392,7 +392,7 @@ class OnDemandPublisher(threading.Thread):
             return self.echo_topic
 
         elif item == 'echo':
-            self.testBus.subscribedTo(self['echoTopic'])
+            return self.testBus.subscribedTo(self['echoTopic'])
         
         elif item == 'streamTopic':
             return self.stream_topic
@@ -416,7 +416,7 @@ class OnDemandPublisher(threading.Thread):
             return self.syntax_check_topic
         
         elif item == 'chkSyntax':
-            self.testBus.subscribedTo(self['syntaxTopic'])
+            return self.testBus.subscribedTo(self['syntaxTopic'])
 
         
         elif item == 'discardTopics':
