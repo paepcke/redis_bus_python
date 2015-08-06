@@ -273,6 +273,9 @@ class OnDemandPublisher(threading.Thread):
     
     @echo_topic.setter
     def echo_topic(self, new_echo_topic):
+        if new_echo_topic is None or len(new_echo_topic) == 0:
+            # Set to default echo topic:
+            new_echo_topic = ECHO_TOPIC 
         self._echo_topic = new_echo_topic
 
     @property
@@ -296,6 +299,9 @@ class OnDemandPublisher(threading.Thread):
     
     @stream_topic.setter
     def stream_topic(self, new_stream_topic):
+        if new_stream_topic is None or len(new_stream_topic) == 0:
+            # Set to default stream topic:
+            new_stream_topic = STREAM_TOPIC 
         self.msg_streamer.change_stream_topic(new_stream_topic)
 
     @property
@@ -304,7 +310,10 @@ class OnDemandPublisher(threading.Thread):
     
     @stream_content.setter
     def stream_content(self, new_stream_content):
-        self.msg_streamer.change_stream_content(new_stream_content)
+        if new_stream_content is None or len(new_stream_content) == 0:
+            self.msg_streamer.change_stream_content(self.createRandomStr(self.standard_msg_len))
+        else:
+            self.msg_streamer.change_stream_content(new_stream_content)
 
     @property
     def streaming(self):
@@ -312,9 +321,6 @@ class OnDemandPublisher(threading.Thread):
     
     @streaming.setter
     def streaming(self, should_stream):
-        if not (should_stream == False or should_stream == True):
-            raise ValueError('New state for streaming must be True or False')
-
         should_pause = not should_stream
         self.msg_streamer.pause(should_pause)
 
@@ -324,6 +330,9 @@ class OnDemandPublisher(threading.Thread):
     
     @one_shot_topic.setter
     def one_shot_topic(self, new_one_shot_topic):
+        if new_one_shot_topic is None or len(new_one_shot_topic) == 0:
+            # Set to default oneshot topic:
+            new_one_shot_topic = STREAM_TOPIC
         self._one_shot_topic = new_one_shot_topic
         
     @property
@@ -331,8 +340,11 @@ class OnDemandPublisher(threading.Thread):
         return self._one_shot_content
     
     @one_shot_content.setter
-    def one_shot_content(self, new_one_shot_topic):
-        self._one_shot_content = new_one_shot_topic
+    def one_shot_content(self, new_one_shot_content):
+        if new_one_shot_content is None or len(new_one_shot_content) == 0:
+            self._one_shot_content = self.createRandomStr(self.standard_msg_len)
+        else:
+            self._one_shot_content = new_one_shot_content
 
 
     @property
@@ -341,6 +353,9 @@ class OnDemandPublisher(threading.Thread):
     
     @syntax_check_topic.setter
     def syntax_check_topic(self, new_syntax_check_topic):
+        if new_syntax_check_topic is None or len(new_syntax_check_topic) == 0:
+            # Set to default syntax check topic:
+            new_syntax_check_topic = SYNTAX_TOPIC
         self._syntax_check_topic = new_syntax_check_topic
 
     @property
@@ -362,6 +377,14 @@ class OnDemandPublisher(threading.Thread):
     
     @standard_msg_len.setter
     def standard_msg_len(self, new_standard_msg_len):
+        if new_standard_msg_len == 0 or \
+           new_standard_msg_len is None:
+            new_standard_msg_len = STANDARD_MSG_LENGTH
+        try:
+            new_standard_msg_len = int(new_standard_msg_len)
+        except:
+            new_standard_msg_len = STANDARD_MSG_LENGTH
+            
         self._standard_msg_len = new_standard_msg_len
     
     def __getitem__(self, item):
@@ -369,12 +392,14 @@ class OnDemandPublisher(threading.Thread):
             return self.echo_topic
 
         elif item == 'echo':
-            self.testBus.subscribedTo(self.echoTopic)
+            self.testBus.subscribedTo(self['echoTopic'])
         
         elif item == 'streamTopic':
             return self.stream_topic
         elif item == 'streamContent':
             return self.stream_content
+        elif item == 'streaming':
+            return self.streaming
         
         elif item == 'oneShotTopic':
             return self.one_shot_topic
@@ -391,7 +416,7 @@ class OnDemandPublisher(threading.Thread):
             return self.syntax_check_topic
         
         elif item == 'chkSyntax':
-            self.testBus.subscribedTo(self.syntaxTopic)
+            self.testBus.subscribedTo(self['syntaxTopic'])
 
         
         elif item == 'discardTopics':
@@ -401,16 +426,23 @@ class OnDemandPublisher(threading.Thread):
             raise KeyError('Key %s is not in schoolbus tester' % item)
     
     def __setitem__(self, item, new_val):
+                
         if item == 'echoTopic':
             self.echo_topic = new_val
             
         elif item == 'echo':
+            # Deal with both string and bool:
+            new_val = (new_val == 'True' or new_val == True)
             self.serve_echo = new_val
 
         elif item == 'streamTopic':
             self.stream_topic = new_val
         elif item == 'streamContent':
-            self.stream_conent = new_val
+            self.stream_content = new_val
+        elif item == 'streaming':
+            # Deal with both string and bool:
+            new_val = (new_val == 'True' or new_val == True)
+            self.streaming = new_val
             
         elif item == 'oneShotContent':
             self.one_shot_content = new_val
@@ -427,6 +459,8 @@ class OnDemandPublisher(threading.Thread):
             self.syntax_check_topic = new_val
             
         elif item == 'chkSyntax':
+            # Deal with both string and bool:
+            new_val = (new_val == 'True' or new_val == True)
             self.check_syntax = new_val
             
         elif item == 'discardTopics':
@@ -468,13 +502,19 @@ class OnDemandPublisher(threading.Thread):
             msgLen = self.standard_msg_len 
     
         if content is None:    
-            content = bytearray()
-            for _ in range(msgLen):
-                content.append(random.choice(string.letters))
+            content = self.createRandomStr(msgLen)
         
         msg = BusMessage(content=content, topicName=topic, context=hashlib.md5(str(content)).hexdigest())
 
         return msg
+        
+    def createRandomStr(self, the_len):
+        the_len = int(the_len)
+        content = bytearray()
+        for _ in range(the_len):
+            content.append(random.choice(string.letters))
+        return str(content)
+                
         
     def sendMessage(self, bus_msg=None):
         '''
@@ -652,10 +692,10 @@ class MessageOutStreamer(threading.Thread):
         return self._paused
     
     def change_stream_topic(self, newTopic):
-        self.busMsg.stream_topic = newTopic
+        self.busMsg.topicName = newTopic
     
     def change_stream_content(self, newContent):
-        self.busMsg.stream_content = newContent
+        self.busMsg.content = newContent
 
     def run(self):
         '''

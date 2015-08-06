@@ -7,7 +7,7 @@ function SbTesterControl() {
 	// String that shows up in 
 	var originDir   = 'bus/controller';
 	
-	var chkBoxes = ['stream', 'echo', 'chkSyntax'];
+	var chkBoxes = ['streaming', 'echo', 'chkSyntax'];
 
 	// Will be filled by constructor with 
 	// all UI elements as keys, and empty strings
@@ -15,6 +15,10 @@ function SbTesterControl() {
 	// on the server is made, just that parameter
 	// value is modified in reqTemplate:
 	var reqTemplate = {};
+	
+	// Dict mapping UUIDs from test server to
+	// server-selection radio button widgets:
+	var testServers = {}
 	
 	/* ------------------------------------ Methods ------------------------*/
 	
@@ -28,9 +32,10 @@ function SbTesterControl() {
 		var serverParmForm = document.forms['serverParms'];
 		for (var i=0; i < serverParmForm.length; i++) {
 			widget = serverParmForm[i];
-			if (widget.type == 'text' ||
-				widget.type == 'checkbox' ||
-				widget.type == 'radio') {
+			if ((widget.type == 'text' ||
+				 widget.type == 'checkbox' ||
+				 widget.type == 'radio') && 
+				widget.id.length > 0){
 			reqTemplate[widget.id] = '';
 			}
 		}
@@ -40,20 +45,16 @@ function SbTesterControl() {
 		sendReq({'server' : 'on'});
 	}
 
-	this.stopServer = function() {
-		sendReq({'server' : 'off'});
-	}
-	
 	this.submit = function() {
-		parmsDict = {'strLen' : document.getElementById('strLen').innerHTML,
-					 'oneShotTopic' : document.getElementById('oneShotTopic').innerHTML,
-					 'oneShotContent' : document.getElementById('oneShotContent').innerHTML,
-					 'streamTopic' : document.getElementById('streamTopic').innerHTML,
-					 'streamContent' : document.getElementById('streamContent').innerHTML,
-					 'syntaxTopic' : document.getElementById('syntaxTopic').innerHTML,
-					 'discardTopics' : document.getElementById('discardTopics').innerHTML,
+		parmsDict = {'strLen' : document.getElementById('strLen').value,
+					 'oneShotTopic' : document.getElementById('oneShotTopic').value,
+					 'oneShotContent' : document.getElementById('oneShotContent').value,
+					 'streamTopic' : document.getElementById('streamTopic').value,
+					 'streamContent' : document.getElementById('streamContent').value,
+					 'syntaxTopic' : document.getElementById('syntaxTopic').value,
+					 'discardTopics' : document.getElementById('discardTopics').value,
 					 
-					 'stream' : document.getElementById('stream').checked ? 'True' : 'False',
+					 'streaming' : document.getElementById('streaming').checked ? 'True' : 'False',
 					 'echo' : document.getElementById('echo').checked ? 'True' : 'False',
 					 'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False',
 		}
@@ -77,6 +78,16 @@ function SbTesterControl() {
 			newReqDict[reqKeysToChange[i]] = parmsDict[reqKeysToChange[i]];
 		}
 
+		// Add the server UUID so that the test server can
+		// find the already existing SchoolBus server:
+		var uuid = getCheckedServerId();
+		
+		// If uuid is the placeholder '_' then 
+		// set the server id in the request dict 
+		// to the empty string; else to the uuid:
+		
+		newReqDict['server_id'] = uuid == '_' ? '' : uuid; 
+		
 		theUrl = 'http://' + originHost + '/' + originDir;
 
 	    var xmlHttp = new XMLHttpRequest();
@@ -86,7 +97,9 @@ function SbTesterControl() {
 	    //***********
 	    console.log('Ret: ' + xmlHttp.responseText);
 	    //***********
-	    return xmlHttp.responseText;
+	    respDict = JSON.parse(xmlHttp.responseText);
+	    processServerResponse(respDict);
+	    return respDict;
 		
 	}
 
@@ -102,32 +115,103 @@ function SbTesterControl() {
 		 */
 		
 		serverParmNames = Object.getOwnPropertyNames(respDict);
+		if (serverParmNames.indexOf('error') != -1) {
+			alert('Test server error: ' + respDict['error'])
+			return
+		}
+		
+		// Grab the server_id from the return:
+		serverId = respDict['server_id'];
+		serverRadioBtn = getCheckedServerRadioBtn();
+		testServers[serverId] = serverRadioBtn;
+		serverRadioBtn.id = serverId;
+		
 		for (var i=0; i<serverParmNames.length; i++) {
 			parmName = serverParmNames[i];
 			newVal = respDict[parmName];
 			
-			// If value is for a checkbox, turn the server-returned
-			// 'True', 'False' into lower case, and use the proper
-			// checkbox setting syntax:
-			if (chkBoxes.indexOf(parmName) != -1) {
-				// It's a checkbox:
-				document.getElementById(parmName).checked = newVal.toLowerCase();
-			} else {
-				document.getElementById(parmName).innerHTML = newVal;
+			// See which widget in the HTML page corresponds
+			// to the server parameter parmName:
+			widget = document.getElementById(parmName);
+			if (widget == null) {
+				// None (e.g. server_id):
+				continue;
 			}
+			
+			if (widget.type == 'checkbox') {
+				// It's a checkbox; values will be 'True' or 'False':
+				document.getElementById(parmName).checked = (newVal === 'True');
+			} else if ((widget.type == 'text') ||
+					   (widget.type == 'textarea')) {
+				// 
+				document.getElementById(parmName).value = txtArrayToStr(newVal);
+			} else {
+				// Some other widget that doesn't correspond to a server parameter:
+				continue
+			}
+			
 		}
 	}
 	
 	var cloneReqTemplate = function() {
-		new_template = {}
+		var newTemplate = {}
 		propNames = Object.getOwnPropertyNames(reqTemplate);
 		for (var i=0; i<propNames.length; i++ ) {
 			key = propNames[i];
 			if (reqTemplate.hasOwnProperty(key)) {
-				new_template[key] = reqTemplate[key];
+				newTemplate[key] = reqTemplate[key];
 			}
 		}
-		return new_template;
+		return newTemplate;
+	}
+	
+	var getCheckedServerId = function() {
+		/**
+		 * Returns the UUID of the test server whose
+		 * corresponding radio button is checked.
+		 */
+		
+		var serverRadios = document.getElementsByName('serverRadios')
+		for (var i=0; i<serverRadios.length; i++) {
+			if (serverRadios[i].checked == true) {
+				return serverRadios[i].id
+			}
+		}
+	}
+	
+	var getCheckedServerRadioBtn = function() {
+		var serverRadios = document.getElementsByName('serverRadios')
+		for (var i=0; i<serverRadios.length; i++) {
+			if (serverRadios[i].checked == true) {
+				return serverRadios[i]
+			}
+		}
+		
+	}
+	
+	var isArray = function(obj) {
+		return Object.prototype.toString.call( obj ) === '[object Array]';
+	}
+	
+	var txtArrayToStr = function(obj) {
+		if (! isArray(obj)) {
+			return obj
+		} 
+		// It's an array
+		res = ''
+		for (var i=0; i<obj.length; i++) {
+			element = obj[i];
+			if (res.length != 0) {
+				res += ', ';
+			} 
+			if (Object.prototype.toString.call(element) !== '[Object String]') {
+				// Against promise: an element isn't a string:
+				res += Object.prototype.toString.call(element);
+			} else {
+				res += element
+			}
+		}
+		return res;
 	}
 }
 
@@ -135,6 +219,5 @@ var sbTesterControl = new SbTesterControl();
 
 
 document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
-document.getElementById('stopServerBtn').addEventListener('click', sbTesterControl.stopServer);
 document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
 

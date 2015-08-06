@@ -39,3 +39,5 @@ input[type=button] { background-color: #5794ad;
 input[type=submit] { background-color: #5794ad;
 					 color: white; 
 				   }
+				   
+input[type=radio].serverSelector  { border: green; }

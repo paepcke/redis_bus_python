@@ -26,14 +26,11 @@ class BusMessage(object):
         Any additional keyword args will also end up as instance variables.
         
         
-        :param pythonStruct: Any Python structure that is to appear
+        :param content: Any Python structure that is to appear
             on the wire in the _content field of the bus message.
-        :type pythonStruct: <any>
+        :type content: <any>
         :param topicName: topic to which the message will ultimately be published.
         :type topicName: String
-        :param moreArgsDict: optional dictionary of additional key/value pairs.
-            Instance variables will be created for them.
-        :type moreArgsDict: {String : <any>}
         :param isJsonContent: if True, instance creation will consider the content value
             to be a JSON compliant dict of the form {"content": "foo", "id": "myId", "time": "12345"}
             In this case the instance's content/id/time properties will be set to the
@@ -42,6 +39,10 @@ class BusMessage(object):
             fields, those missing fields are set to None.  If isJsonContent is false, then
             the content field is placed into this new instance's content field as a value,
             and message ID and timestamps are generated.
+        :type isJsonContent: bool
+        :param moreArgsDict: optional dictionary of additional key/value pairs.
+            Instance variables will be created for them.
+        :type moreArgsDict: {String : <any>}
         '''
         if isJsonContent:
             # See whether this is a real BusMessage, with 
@@ -99,6 +100,10 @@ class BusMessage(object):
                 
         for instVarName,instVarValue in list(kwargs.items()):
             setattr(self, instVarName, instVarValue)
+
+
+    def __len__(self):
+        return len(self.content)    
            
     def init_defaults(self, content, generate_good_defaults=True):
         '''

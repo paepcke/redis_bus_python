@@ -9,8 +9,8 @@
 <form class=inputFields id=serverParms>
 	<fieldset>
 		<legend>Server run controls</legend>
-		<input type="button" class="one" value="Start Server" id="startServerBtn" name="startServerBtn"> 	
-		<input type="button" class="one" value="Stop Server" id="stopServerBtn" name="stopServerBtn">
+		<input type="radio" class="serverSelector" name="serverRadios" checked>
+		<input type="button" class="one" value="Additional Server" id="startServerBtn" name="startServerBtn"> 	
 	</fieldset>
 	<br>
 	<fieldset>
@@ -52,8 +52,8 @@
 	<fieldset>
 		<legend>Services</legend>
 		<p>
-			<label for="stream">Continuously stream msgs:</label>
-			<input type="checkbox" id="stream" name="stream">
+			<label for="streaming">Continuously stream msgs:</label>
+			<input type="checkbox" id="streaming" name="stream">
 		</p>
 		<p>			
 			<label for="echo">Echo msgs:</label>

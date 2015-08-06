@@ -12,8 +12,10 @@ TODO:
 '''
 
 import json
+import time
 import tornado.ioloop
 import tornado.web
+import uuid
 
 from schoolbus_test_server import OnDemandPublisher
 
@@ -38,6 +40,16 @@ class BusTesterWebController(tornado.web.RequestHandler):
     syntax_check : {<msg_str> | None}
     def_msg_len : {<int> | None} 
     '''
+
+    # UID --> (OnDemandPubliser, kill_time)
+    test_servers = {}
+
+    # Number of seconds after which test server
+    # instances get killed, because we assume that
+    # the browser that created that server is
+    # abandoned:
+    
+    DEFAULT_TIME_TO_LIVE = 2.0 * 3600.0 # hrs * sec/hr
     
     # String used by sbtester.js when requesting the
     # current value of a quantity, rather than setting
@@ -50,46 +62,63 @@ class BusTesterWebController(tornado.web.RequestHandler):
         self.title = "SchoolBus Tester"
         super(BusTesterWebController, self).__init__(application, request, **kwargs)
         
-        # UID --> (OnDemandPubliser, kill_time)
-        self.test_servers = {}
-
+        # Make sure this test server instance dies
+        # if this main Python process is killed:
+        self.daemon = True
+        
+        
+        # This instance is created to serve one request
+        # from a browser. If that browser never called
+        # before, my_server() will invent a UID,
+        # create an OnDemandPublisher instance, and save
+        # it in the class var test_servers as value of the UID key. 
+        # If the browser called before, the request will include a UID
+        # with which to retrieve the already existing OnDemandPublisher:
+        
+        self.test_server_id = None
+        
     def post(self):
         
         # Get the JSON in the post body, and replace unicode
         # with str types:
         
         html_parms = self.byteify(json.loads(self.request.body))
+        
+        # Check whether browser included a test server id; if 
+        # such an ID is absent, then a new server will be 
+        # created as soon as my_server() is called below. But
+        # if the browser does pass a server id, my_server() will
+        # find and use the existing one:
+        
+        server_id_in_req =  html_parms.get('server_id', '')
+        self.test_server_id = None if len(server_id_in_req) == 0 else server_id_in_req
+        # Remove the server_id from the reqDict b/c we
+        # are now dealing with it:
+        try:
+            del(html_parms['server_id'])
+        except:
+            pass
+        if self.test_server_id is None or len(self.test_server_id) == 0:
+            # First contact by this browser tab; 
+            # Have my_server() create an OnDemandPublisher,
+            # and associate it with a UUID in test_servers:
+            self.my_server
 
         #********
         # Echo the HTML parameters:
         # self.write("<html><body>GET method was called: %s.<br>" %str(html_parms))
         #********
         response_dict = {}
+        
+        # Init the server UUID in the response:
+        response_dict['server_id'] = self.test_server_id
+        
         try:
+            # Go through each server parm in the request dict,
+            # and update the server to the respective value;
+            # also fill the response_dict with the new value:
             for (parm_key, parm_value) in html_parms.items():
-                
-                # Server start/stop?
-                
-                if parm_key == 'server':
-                    
-                    new_server_state = self.ensure_lower_non_array(parm_value)
-                    
-                    if new_server_state == 'on':
-                        # Just ask for the server, and it will be started
-                        # if it isn't already:
-                        self.my_server
-                        response_dict['server'] = 'on'
-                    elif new_server_state == BusTesterWebController.REQUEST_STR:
-                        # Just return whether server is currently running:
-                        response_dict['server'] = self.server_running()
-                    elif new_server_state == 'off':
-                        response_dict = self.stopServer(response_dict)
-                    else:
-                        self.return_error(response_dict, "Server command must be 'on', 'off', or '%s'" % BusTesterWebController.REQUEST_STR)
-                        return
-                else:
-                    # One of the server parameter settings/state-queries: topics or contents, etc.:
-                    response_dict = self.get_or_set_server_parm(parm_key, parm_value, response_dict)
+                response_dict = self.get_or_set_server_parm(parm_key, parm_value, response_dict)
             
             # Send a dict with keys being the HTML parameter
             # names, and values being the current server
@@ -126,14 +155,25 @@ class BusTesterWebController(tornado.web.RequestHandler):
             
         try:
             # Is this a request for the current value of the server setting?
-            if len(parm_val) == 0 and self.my_server is not None:
-                # Return current current value:
+            # Special cases: oneShotContent and echoContent: setting
+            # values of length 0 means: set to default strings of standard
+            # length, so the next branch of this conditional is the
+            # one to take for these two cases; other zero-length values
+            # indicate request for current value:
+            if len(parm_val) == 0 and \
+                   self.my_server is not None and \
+                   parm_name != 'oneShotContent' and \
+                   parm_name != 'echoContent':
+                # Return current value:
                 response_dict[parm_name] =  self.my_server[parm_name]
     
             # We are to set the server parm:
-            elif self.my_server is not None:
+            if self.my_server is not None:
                 self.my_server[parm_name] = parm_val
-                response_dict[parm_name] =  parm_val
+                # Read value back out from the server,
+                # b/c the setters may modify values (e.g.
+                # entering defaults when strings are empty):
+                response_dict[parm_name] =  self.my_server[parm_name]
             else:
                 # It's a request for current value, but no server is running;
                 # report back to the browser, and close the connection:
@@ -141,23 +181,46 @@ class BusTesterWebController(tornado.web.RequestHandler):
                 # The following will be ignored in the POST method:
                 raise ValueError('SchoolBus server is not running.')
         except KeyError:
-            self.return_error(response_dict, 'Server parameter %s does not exist' % parm_name)
-            raise ValueError('Server parameter %s does not exist' % parm_name)
+            self.return_error(response_dict, "Server parameter '%s' does not exist" % parm_name)
+            raise ValueError("Server parameter '%s' does not exist" % parm_name)
+        except ValueError as e:
+            self.return_error(response_dict, `e`)
+            # Re-raising ValueError ensures that caller
+            # knows we already returned an error to the
+            # browser, and closed the connection via
+            # finish(), which happens in return_error()
+            raise
             
         return response_dict
 
     @property
     def my_server(self):
-        if self.server_running():
-            return self.test_servers[self]
         
-        # Create an OnDemandPubliser that will stream one
-        # the standard topic/content:
-        self.test_servers[self] = OnDemandPublisher(streamMsgs=(None,None))
+        # Did the request from the browser that
+        # created this instance include a test
+        # server UID? If so, there already is
+        # an OnDemandPublisher instance for that
+        # browser:
+        
+        if self.test_server_id is not None:
+            (server, time_to_kill) = BusTesterWebController.test_servers[self.test_server_id] #@UnusedVariable
+            return server
+        
+        # Create an OnDemandPubliser that will stream on
+        # the standard topic/content; store it in the
+        # class var topic_servers in a two-tuple:
+        #   (serverInstance, timeToKill)
+        self.test_server_id = uuid.uuid1().hex
+         
+        server = OnDemandPublisher(streamMsgs=(None,None))
+        
+        BusTesterWebController.test_servers[self.test_server_id] = \
+            (server, time.time() + BusTesterWebController.DEFAULT_TIME_TO_LIVE)
+            
         # Before starting the server, pause the message streaming server:
-        self.test_servers[self].streaming = False
-        self.test_servers[self].start()
-        return self.test_servers[self]
+        server.streaming = False
+        server.start()
+        return server
         
     def stopServer(self, responseDict):
         # Truly stop the server; to start again, a new
