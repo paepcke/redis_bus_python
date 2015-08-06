@@ -14,6 +14,7 @@ TODO:
 '''
 
 import json
+import logging
 import threading
 import time
 import tornado.ioloop
@@ -274,7 +275,15 @@ class BusTesterWebController(tornado.web.RequestHandler):
             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
             ]
 
-        application = tornado.web.Application(handlers)
+        application = tornado.web.Application(handlers , debug=True)
+        #*********
+#         access_logger = logging.getLogger('tornado.access')
+#         access_logger.setLevel(logging.DEBUG)
+#         app_logger = logging.getLogger('tornado.application')
+#         app_logger.setLevel(logging.DEBUG)
+#         gen_logger = logging.getLogger('tornado.general')
+#         gen_logger.setLevel(logging.DEBUG)
+        #*********
         return application
 
 if __name__ == "__main__":

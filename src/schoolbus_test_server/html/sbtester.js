@@ -63,7 +63,11 @@ function SbTesterControl() {
 	}
 	
 	var sendReq = function (parmsDict) {
-		
+		if (sendReq.locked) {
+			return undefined
+		} else {
+			sendReq.locked = true;
+		}
 		// Names of all the server parameters to *change*:
 		reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
 		
@@ -92,17 +96,28 @@ function SbTesterControl() {
 		theUrl = 'http://' + originHost + '/' + originDir;
 
 	    var xmlHttp = new XMLHttpRequest();
-	    xmlHttp.open( "POST", theUrl, false );
-	    xmlHttp.send( JSON.stringify( newReqDict ) );
+	    xmlHttp.onreadystatechange = function() {
+	    	if (xmlHttp.readyState == 4) {
+	    		if (xmlHttp.status != 200) {
+	    			alert('Server error ' + xmlHttp.status)
+	    		}
+	    		try {
+				    //***********
+				    console.log('Ret: ' + xmlHttp.responseText);
+				    //***********
+				    respDict = JSON.parse(xmlHttp.responseText);
+				    processServerResponse(respDict);
+	    		} finally {
+					sendReq.locked = false;
+	    		}
+	    	}
+	    }
 	    
-	    //***********
-	    console.log('Ret: ' + xmlHttp.responseText);
-	    //***********
-	    respDict = JSON.parse(xmlHttp.responseText);
-	    processServerResponse(respDict);
-	    return respDict;
-		
+	    // The 'false' means: call synchronously:
+	    xmlHttp.open( "POST", theUrl, true );
+	    xmlHttp.send( JSON.stringify( newReqDict ) );
 	}
+	sendReq.locked = false;
 
 	var processServerResponse = function(respDict) {
 		/**
