@@ -323,6 +323,8 @@ class BusTesterWebController(WebSocketHandler):
         # Before starting the server, pause the message streaming server:
         server.streaming = False
         server.start()
+        server.serve_echo = True
+        server.check_syntax = True
         return server
         
     def stopServer(self, responseDict):

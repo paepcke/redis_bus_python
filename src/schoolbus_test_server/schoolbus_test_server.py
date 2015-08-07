@@ -577,7 +577,7 @@ class OnDemandPublisher(threading.Thread):
         self.mostRecentRxTime = time.time()
         self.printedResetting = False
         
-        if self.serve_echos:
+        if self.serve_echo:
             # Create a message with the same content as the incoming
             # message, timestamp the new message, and publish it
             # on the response topic (i.e. tmp.<msgId>):

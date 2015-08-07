@@ -1,6 +1,6 @@
 function SbTesterControl() {
 
-	/* ------------------------------------ Constnats ------------------*/
+	/* ------------------------------------ Constants ------------------*/
 
 	// Websocket state 'ready for action'
 	// (Note: for other types of sockets the
@@ -116,6 +116,14 @@ function SbTesterControl() {
 		sendReq(parmsDict);
 	}
 	
+	this.wsReady = function() {
+		return ws.readyState == READY_STATE;
+	}
+	
+	this.getWs = function() {
+		return ws;
+	}
+	
 	var send = function(msg) {
 		if (ws.readyState != READY_STATE) {
 			ws.onreadystatechange = function(msg) {
@@ -127,9 +135,8 @@ function SbTesterControl() {
 			};
 			return;
 		} else {
-			
+			ws.send(msg);
 		}
-		ws.send(msg);
 	}
 	
 	
@@ -282,8 +289,22 @@ function SbTesterControl() {
 var sbTesterControl = new SbTesterControl();
 
 // Fill in the fields with actual server parm values:
-//*******sbTesterControl.submit();
+// (Race condition with Websocket connection process
+// when done here)
+//******sbTesterControl.submit();
 
 document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
 document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
+
+window.onload = function() {
+	if (! sbTesterControl.wsReady()) {
+		sbTesterControl.getWs().onreadystatechange = function() {
+			if (sbTesterControl.wsReady()) {
+				sbTesterControl.submit();
+			}
+		}
+	} else {
+		sbTesterControl.submit();
+	}
+};
 
