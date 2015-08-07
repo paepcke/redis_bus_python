@@ -1,13 +1,24 @@
 function SbTesterControl() {
 
-	/* ------------------------------------ Instance Vars ------------------*/
+	/* ------------------------------------ Constnats ------------------*/
+
+	// Websocket state 'ready for action'
+	// (Note: for other types of sockets the
+	// ready state is 1):
+	var READY_STATE = 1;
+	var MAX_CONNECT_WAIT_TIME = 2000 // 2 seconds
 
 	var originHost  = 'localhost';
 	var originPort  = 8000;
-	// String that shows up in 
+	// URL part after the domain and port.
+	// Server expects websocket connections there:
 	var originDir   = 'bus/controller';
 	
-	var chkBoxes = ['streaming', 'echo', 'chkSyntax'];
+	var keepAliveInterval = 15000; /* 15 sec*/
+	
+	/* ------------------------------------ Instance Vars ------------------*/
+
+	var keepAliveTimer    = null;
 
 	// Will be filled by constructor with 
 	// all UI elements as keys, and empty strings
@@ -19,6 +30,8 @@ function SbTesterControl() {
 	// Dict mapping UUIDs from test server to
 	// server-selection radio button widgets:
 	var testServers = {}
+	
+	var connectAttemptTime = null;
 	
 	/* ------------------------------------ Methods ------------------------*/
 	
@@ -39,6 +52,47 @@ function SbTesterControl() {
 			reqTemplate[widget.id] = '';
 			}
 		}
+		
+		connectAttemptTime = new Date();
+		ws = new WebSocket("ws://" + originHost + "/bus/controller");
+		
+		ws.onopen = function() {
+		    keepAliveTimer = window.setInterval(function() {sendKeepAlive()}, keepAliveInterval);
+		};
+	
+		ws.onclose = function() {
+			if (keepAliveTimer !== null) {
+		    	clearInterval(keepAliveTimer);
+			}
+		    alert("The browser or server closed the connection, or network trouble; please reload the page to resume.");
+		}
+	
+		ws.onerror = function(evt) {
+			if (keepAliveTimer !== null) {
+		    	clearInterval(keepAliveTimer);
+			}
+		    alert("The browser has detected an error while communicating with the data server: " + evt.data);
+		}
+
+	    var sendKeepAlive = function() {
+			//var req = buildRequest("keepAlive", "");
+	    	var req = "keepAlive";
+			ws.send(req);
+	    }
+		
+		ws.onmessage = function(evt) {
+		    // Internalize the JSON
+		    // e.g. "{resp : "courseList", "args" : ['course1','course2']"
+		    try {
+			//var oneLineData = evt.data.replace(/(\r\n|\n|\r)/gm," ");
+			argsObj = JSON.parse(evt.data);
+		    } catch(err) {
+		    	alert('Error report from server (' + evt.data + '): ' + err );
+			return
+		    }
+		    processServerResponse(argsObj);
+		}
+		
 		
 	}();
 	
@@ -62,12 +116,24 @@ function SbTesterControl() {
 		sendReq(parmsDict);
 	}
 	
-	var sendReq = function (parmsDict) {
-		if (sendReq.locked) {
-			return undefined
+	var send = function(msg) {
+		if (ws.readyState != READY_STATE) {
+			ws.onreadystatechange = function(msg) {
+				if (ws.readyState == READY_STATE) {
+					ws.send(msg);
+				} else {
+					alert('Could not connect to server; timed out.');
+				}
+			};
+			return;
 		} else {
-			sendReq.locked = true;
+			
 		}
+		ws.send(msg);
+	}
+	
+	
+	var sendReq = function (parmsDict) {
 		// Names of all the server parameters to *change*:
 		reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
 		
@@ -94,31 +160,10 @@ function SbTesterControl() {
 		newReqDict['server_id'] = uuid == '_' ? '' : uuid; 
 		
 		theUrl = 'http://' + originHost + '/' + originDir;
-
-	    var xmlHttp = new XMLHttpRequest();
-	    xmlHttp.onreadystatechange = function() {
-	    	if (xmlHttp.readyState == 4) {
-	    		if (xmlHttp.status != 200) {
-	    			alert('Server error ' + xmlHttp.status)
-	    		}
-	    		try {
-				    //***********
-				    console.log('Ret: ' + xmlHttp.responseText);
-				    //***********
-				    respDict = JSON.parse(xmlHttp.responseText);
-				    processServerResponse(respDict);
-	    		} finally {
-					sendReq.locked = false;
-	    		}
-	    	}
-	    }
-	    
-	    // The 'false' means: call synchronously:
-	    xmlHttp.open( "POST", theUrl, true );
-	    xmlHttp.send( JSON.stringify( newReqDict ) );
+		
+	    send( JSON.stringify( newReqDict ) );
 	}
-	sendReq.locked = false;
-
+	
 	var processServerResponse = function(respDict) {
 		/**
 		 * For each key/value pair in respDict, looks up the
@@ -129,6 +174,7 @@ function SbTesterControl() {
 		 * :param respDict: keys are names of server parameters.
 		 * :type respDict: {str : str}
 		 */
+		
 		
 		serverParmNames = Object.getOwnPropertyNames(respDict);
 		if (serverParmNames.indexOf('error') != -1) {
@@ -236,7 +282,7 @@ function SbTesterControl() {
 var sbTesterControl = new SbTesterControl();
 
 // Fill in the fields with actual server parm values:
-sbTesterControl.submit();
+//*******sbTesterControl.submit();
 
 document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
 document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);

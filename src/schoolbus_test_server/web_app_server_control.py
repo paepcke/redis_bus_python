@@ -13,21 +13,22 @@ TODO:
 
 '''
 
+import datetime
 import json
-import logging
-import threading
+import signal
 import time
 import tornado.ioloop
 import tornado.web
 import uuid
 
 from schoolbus_test_server import OnDemandPublisher
+from  websocket import WebSocketHandler
 
 
+#****from schoolbus_test_server.tornado.websocket import WebSocketHandler
 BUS_TESTER_SERVER_PORT = 8000
-IN_REQUEST_LOCK = threading.Lock()
 
-class BusTesterWebController(tornado.web.RequestHandler):
+class BusTesterWebController(WebSocketHandler):
     '''
     This class is a Web service that listens to GET
     requests. The parameters control one or more
@@ -45,9 +46,7 @@ class BusTesterWebController(tornado.web.RequestHandler):
     def_msg_len : {<int> | None} 
     '''
 
-    # UID --> (OnDemandPubliser, kill_time)
-    test_servers = {}
-
+    # ----------------------------- Constants ---------------------
     # Number of seconds after which test server
     # instances get killed, because we assume that
     # the browser that created that server is
@@ -56,15 +55,25 @@ class BusTesterWebController(tornado.web.RequestHandler):
     DEFAULT_TIME_TO_LIVE = 2.0 * 3600.0 # hrs * sec/hr
     
     HTML_CLOSE = "</body></html>"
+    
+    LOG_LEVEL_NONE  = 0
+    LOG_LEVEL_ERR   = 1
+    LOG_LEVEL_INFO  = 2
+    LOG_LEVEL_DEBUG = 3
 
+    # ----------------------------- Class Variables ---------------------
+    
+    # UUID --> (OnDemandPubliser, kill_time):
+    test_servers = {}
+
+    
     def __init__(self, application, request, **kwargs):
         self.title = "SchoolBus Tester"
         super(BusTesterWebController, self).__init__(application, request, **kwargs)
         
-        # Make sure this test server instance dies
-        # if this main Python process is killed:
-        self.daemon = True
-        
+        #self.loglevel = BusTesterWebController.LOG_LEVEL_DEBUG
+        self.loglevel = BusTesterWebController.LOG_LEVEL_INFO
+        #self.loglevel = BusTesterWebController.LOG_LEVEL_NONE
         
         # This instance is created to serve one request
         # from a browser. If that browser never called
@@ -75,13 +84,36 @@ class BusTesterWebController(tornado.web.RequestHandler):
         # with which to retrieve the already existing OnDemandPublisher:
         
         self.test_server_id = None
+
+    def allow_draft76(self):
+        '''
+        Allow WebSocket connections via the old Draft-76 protocol. It has some
+        security issues, and was replaced. However, Safari (i.e. e.g. iPad)
+        don't implement the new protocols yet. Overriding this method, and
+        returning True will allow those connections.
+        '''
+        return True
+
+    def open(self): #@ReservedAssignment
+        '''
+        Called by WebSocket/tornado when a client connects. Method must
+        be named 'open'
+        '''
+        self.logDebug("Open called")
         
-    def post(self):
+    def on_message (self, msg):
+        
+        if (msg == 'keepAlive'):
+            return
         
         # Get the JSON in the post body, and replace unicode
         # with str types:
-        
-        html_parms = self.byteify(json.loads(self.request.body))
+        try:
+            msg_dict = self.byteify(json.loads(msg))
+        except ValueError:
+            # Bad JSON:
+            self.return_error({}, "Message from client not good JSON: '%s'" % str(msg))
+            return
         
         # Check whether browser included a test server id; if 
         # such an ID is absent, then a new server will be 
@@ -89,12 +121,12 @@ class BusTesterWebController(tornado.web.RequestHandler):
         # if the browser does pass a server id, my_server() will
         # find and use the existing one:
         
-        server_id_in_req =  html_parms.get('server_id', '')
+        server_id_in_req =  msg_dict.get('server_id', '')
         self.test_server_id = None if len(server_id_in_req) == 0 else server_id_in_req
         # Remove the server_id from the reqDict b/c we
         # are now dealing with it:
         try:
-            del(html_parms['server_id'])
+            del(msg_dict['server_id'])
         except:
             pass
         if self.test_server_id is None or len(self.test_server_id) == 0:
@@ -103,26 +135,76 @@ class BusTesterWebController(tornado.web.RequestHandler):
             # and associate it with a UUID in test_servers:
             self.my_server
 
-        #********
-        # Echo the HTML parameters:
-        # self.write("<html><body>GET method was called: %s.<br>" %str(html_parms))
-        #********
+        # Turn 'True' and 'False' values into bools:
+        msg_dict['chkSyntax'] = True if msg_dict.get('chkSyntax', None) == 'True' else False
+        msg_dict['echo'] = True if msg_dict.get('echo', None) == 'True' else False
+        msg_dict['streaming'] = True if msg_dict.get('streaming', None) == 'True' else False
+            
+
         response_dict = {}
         
         # Init the server UUID in the response:
         response_dict['server_id'] = self.test_server_id
         
+        #******** Exploring problem of hanging sometimes
+        #         when (un)subscribing while publishing:
+#         response_dict['server_id'] = self.test_server_id
+#         self.write_message(json.dumps(response_dict))
+#         print ('got one; stream')
+#         self.my_server.streaming = True
+#         time.sleep(2)
+#         self.my_server.streaming = False
+#         print ('got one; stop stream')
+#         # Danger!!!!:
+#         
+#         print('Stream off')
+#         self.my_server.streaming = False
+#         print('Echo off')
+#         self.my_server.serve_echo = False
+#         print('Echo on')
+#         self.my_server.serve_echo = True
+#         print('Stream on')
+#         self.my_server.streaming = True
+#         
+#         print('Syntax off')
+#         self.my_server.check_syntax = False
+#         self.my_server.check_syntax = True
+#         print('Syntax on')
+# 
+#         print('Getting constants')
+#         self.my_server.standard_msg_len
+#         self.my_server.one_shot_topic
+#         self.my_server.one_shot_content
+#         self.my_server.stream_topic
+#         self.my_server.stream_content
+#         self.my_server.syntax_check_topic
+#         print('Finished getting')
+#         
+#         return
+        #********
+        
+        
         try:
             # Go through each server parm in the request dict,
             # and update the server to the respective value;
-            # also fill the response_dict with the new value:
-            for (parm_key, parm_value) in html_parms.items():
+            # also fill the response_dict with the new value.
+            # One UI optimization: do the "length of random string"
+            # first, because if subsequent one-shot content or 
+            # message-stream content fields are to be changed,
+            # They will be the correct length. Without this 
+            # order switch, the user needs to hit submit twice:
+            
+            if msg_dict.get('strLen', None) is not None:
+                response_dict = self.get_or_set_server_parm('strLen', msg_dict['strLen'], response_dict)
+                del msg_dict['strLen']
+                
+            for (parm_key, parm_value) in msg_dict.items():
                 response_dict = self.get_or_set_server_parm(parm_key, parm_value, response_dict)
             
             # Send a dict with keys being the HTML parameter
             # names, and values being the current server
             # parameter values:
-            self.finish(json.dumps(response_dict))
+            self.write_message(json.dumps(response_dict))
             
             #******
             # If a real HTML page were to be sent,
@@ -142,7 +224,7 @@ class BusTesterWebController(tornado.web.RequestHandler):
 
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str
-        self.finish(json.dumps(response_dict))
+        self.write_message(json.dumps(response_dict))
 
     def get_or_set_server_parm(self, parm_name, parm_val, response_dict):
         
@@ -158,20 +240,43 @@ class BusTesterWebController(tornado.web.RequestHandler):
             # length, so the next branch of this conditional is the
             # one to take for these two cases; other zero-length values
             # indicate request for current value:
-            if len(parm_val) == 0 and \
+            if len(str(parm_val)) == 0 and \
                    self.my_server is not None and \
                    parm_name != 'oneShotContent' and \
                    parm_name != 'echoContent':
                 # Return current value:
                 response_dict[parm_name] =  self.my_server[parm_name]
-    
+                return response_dict
+            
             # We are to set the server parm:
             if self.my_server is not None:
-                self.my_server[parm_name] = parm_val
-                # Read value back out from the server,
-                # b/c the setters may modify values (e.g.
-                # entering defaults when strings are empty):
-                response_dict[parm_name] =  self.my_server[parm_name]
+                # Only change if different:
+                if self.my_server[parm_name] != parm_val:
+                    
+                    #********
+                    # Because of the instability of subscribe/unsubscribe
+                    # during stream publishing: pause streaming if it's
+                    # on:
+                    was_streaming = False
+                    if parm_name != 'streaming' and self.my_server.streaming:
+                        was_streaming = True
+                        self.my_server.streaming = False
+                    #********
+                    
+                    self.my_server[parm_name] = parm_val
+                    
+                    #************
+                    # Turn streaming back on if it was happening:
+                    if was_streaming:
+                        self.my_server.streaming = True
+                    #************
+                    
+                    # Read value back out from the server,
+                    # b/c the setters may modify values (e.g.
+                    # entering defaults when strings are empty):
+                    response_dict[parm_name] =  self.my_server[parm_name]
+                else:
+                    response_dict[parm_name] =  parm_val
             else:
                 # It's a request for current value, but no server is running;
                 # report back to the browser, and close the connection:
@@ -262,6 +367,26 @@ class BusTesterWebController(tornado.web.RequestHandler):
         else:
             return the_input
 
+    def logInfo(self, msg):
+        if self.loglevel >= BusTesterWebController.LOG_LEVEL_INFO:
+            print(str(datetime.datetime.now()) + ' info: ' + msg)
+
+    def logErr(self, msg):
+        if self.loglevel >= BusTesterWebController.LOG_LEVEL_ERR:
+            print(str(datetime.datetime.now()) + ' error: ' + msg)
+
+    def logDebug(self, msg):
+        if self.loglevel >= BusTesterWebController.LOG_LEVEL_DEBUG:
+            print(str(datetime.datetime.now()) + ' debug: ' + msg)
+
+    @classmethod
+    def shutdown(cls, signum, frame):
+        for server in BusTesterWebController.test_servers:
+            #*********
+            print("calling stop on %s" % str(server))
+            #*********
+            server.stop()
+            server.join()
 
     @classmethod  
     def makeApp(self):
@@ -276,15 +401,10 @@ class BusTesterWebController(tornado.web.RequestHandler):
             ]
 
         application = tornado.web.Application(handlers , debug=True)
-        #*********
-#         access_logger = logging.getLogger('tornado.access')
-#         access_logger.setLevel(logging.DEBUG)
-#         app_logger = logging.getLogger('tornado.application')
-#         app_logger.setLevel(logging.DEBUG)
-#         gen_logger = logging.getLogger('tornado.general')
-#         gen_logger.setLevel(logging.DEBUG)
-        #*********
+        
         return application
+
+signal.signal(signal.SIGINT, BusTesterWebController.shutdown)
 
 if __name__ == "__main__":
 
@@ -295,4 +415,5 @@ if __name__ == "__main__":
     # to the ssl_options (though I haven't tried it out.):
 
     application.listen(BUS_TESTER_SERVER_PORT)
-    tornado.ioloop.IOLoop.instance().start()                
+    print('Starting SchoolBest test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
+    tornado.ioloop.IOLoop.instance().start()
