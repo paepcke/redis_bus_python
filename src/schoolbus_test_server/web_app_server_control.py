@@ -21,6 +21,7 @@ import tornado.ioloop
 import tornado.web
 import uuid
 
+from redis_bus_python.bus_message import BusMessage
 from schoolbus_test_server import OnDemandPublisher
 from  websocket import WebSocketHandler
 
@@ -185,6 +186,15 @@ class BusTesterWebController(WebSocketHandler):
         
         
         try:
+            
+            # Are we to fire a one-shot message?
+            if msg_dict.get('oneShot', None) is not None:
+                one_shot_msg = BusMessage(topicName=self.my_server['oneShotTopic'], content=self.my_server['oneShotContent'])
+                self.my_server.testBus.publish(one_shot_msg)
+                response_dict['success'] = 'OK'
+                self.write_message(json.dumps(response_dict))
+                return
+            
             # Go through each server parm in the request dict,
             # and update the server to the respective value;
             # also fill the response_dict with the new value.
@@ -243,7 +253,8 @@ class BusTesterWebController(WebSocketHandler):
             if len(str(parm_val)) == 0 and \
                    self.my_server is not None and \
                    parm_name != 'oneShotContent' and \
-                   parm_name != 'echoContent':
+                   parm_name != 'echoContent' and \
+                   parm_name != 'streamContent':
                 # Return current value:
                 response_dict[parm_name] =  self.my_server[parm_name]
                 return response_dict
@@ -417,5 +428,5 @@ if __name__ == "__main__":
     # to the ssl_options (though I haven't tried it out.):
 
     application.listen(BUS_TESTER_SERVER_PORT)
-    print('Starting SchoolBest test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
+    print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
     tornado.ioloop.IOLoop.instance().start()

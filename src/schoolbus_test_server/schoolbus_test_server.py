@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import signal
 import string
 import sys
@@ -20,6 +21,7 @@ import traceback
 
 from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
+
 
 # Topic on which echo server listens:
 ECHO_TOPIC = 'echo'
@@ -105,10 +107,15 @@ class OnDemandPublisher(threading.Thread):
     string, and to publish to STREAM_TOPIC.
     
     '''
+    
+    # ----------------------------  Constants ----------------
 
     # Maximum time for no message to arrive before
     # starting over counting messages:
     MAX_IDLE_TIME = 5
+    
+    FIND_COMMA_PATTERN = re.compile(r'[,]+')
+    FIND_SPACE_PATTERN = re.compile(r'[ ]+')    
     
     def __init__(self, serveEchos=True, 
                  listenOn=None, 
@@ -153,7 +160,8 @@ class OnDemandPublisher(threading.Thread):
         self.daemon = True
         self.testBus = BusAdapter()
         self.done = False
-        self.listen_on = []
+        # No topics yet that we are to listen to, but drop msgs for:
+        self.topics_to_discard = []
         
         self.echo_topic = ECHO_TOPIC
         self.syntax_check_topic = SYNTAX_TOPIC
@@ -164,7 +172,6 @@ class OnDemandPublisher(threading.Thread):
         
         self.one_shot_topic = STREAM_TOPIC
         self.one_shot_content = self.standard_bus_msg
-        
 
         # Handle Cnt-C properly:
         signal.signal(signal.SIGINT, functools.partial(self.stop))
@@ -420,7 +427,7 @@ class OnDemandPublisher(threading.Thread):
 
         
         elif item == 'discardTopics':
-            return self.listen_on
+            return self.topics_to_discard
         
         else:
             raise KeyError('Key %s is not in schoolbus tester' % item)
@@ -464,16 +471,56 @@ class OnDemandPublisher(threading.Thread):
             self.check_syntax = new_val
             
         elif item == 'discardTopics':
-            # Unsubscribe from all topics:
-            self.testBus.unsubscribeFromTopic()
-            
+            # Topics to which we should listen, but
+            # whose msgs we are to discard. Check
+            # whether empty str or empty array, which
+            # means unsubscribe from all discardTopic:
+            if len(item) == 0:
+                for topic in self.topics_to_discard:
+                    self.testBus.unsubscribeFromTopic(topic)
+                return
+            # We are given one or more topics. Tolerate
+            # comma-separated, space-separated strings, 
+            # and also arrays:
             if type(new_val) != list:
-                new_val = [new_val]
-            for topic in new_val:
-                self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
-                
-            self.listen_on = new_val
+                # comma-separated string of topics?
+                if OnDemandPublisher.FIND_COMMA_PATTERN.search(new_val) is not None:
+                    # Yes, commas found: remove all spaces that might be around the commas:
+                    new_val = OnDemandPublisher.FIND_SPACE_PATTERN.sub('', new_val)
+                    new_val = new_val.split(',')
+                # Else must be space-separated string of topics or just a single word:
+                else:
+                    # Replace all multi-space areas with single spaces; the strip()
+                    # eliminates spaces at start and end:
+                    new_val = OnDemandPublisher.FIND_SPACE_PATTERN.sub(' ', new_val).strip()
+                    # Get an array of topic strings (works even with singleton topic):
+                    new_val = new_val.split(' ')
+
+            # Unsubscribe from all topics that are *not*
+            # in the new list of topics:
+            for (topic_pos, curr_topic) in enumerate(self.topics_to_discard):
+                if curr_topic not in new_val:
+                    self.topics_to_discard.pop(topic_pos)
             
+            # Subscribe to any topics in the new-list that
+            # we are not already subscribed to:  
+            for topic in new_val:
+                # 
+                try:
+                    # Already subscribed to it?    
+                    self.topics_to_discard.index(topic)
+                    # At least by our bookkeeping, yes 
+                    # (else we would have had the exception.
+                    # Ensure we really are:
+                    if not self.testBus.subscribedTo(topic):
+                        self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
+                    continue
+                except ValueError:
+                    pass
+                # New topic:
+                self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
+                self.topics_to_discard.append(topic)
+                
         else:
             raise KeyError('Key %s is not in schoolbus tester' % item)
         return new_val

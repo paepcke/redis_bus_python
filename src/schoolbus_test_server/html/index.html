@@ -7,11 +7,10 @@
 <body>
 <h1>SchoolBus Test Server</h1>
 <form class=inputFields id=serverParms>
-	<fieldset>
-		<legend>Server run controls</legend>
-		<input type="radio" class="serverSelector" name="serverRadios" checked>
-		<input type="button" class="one" value="Additional Server" id="startServerBtn" name="startServerBtn"> 	
-	</fieldset>
+        <fieldset>
+	        <legend>Commands</legend>
+		<input type="button" class="one" value="Send One-shot Message" id="sendOneShotBtn" name="sendOneShotBtn">
+        </fieldset>
 	<br>
 	<fieldset>
 		<legend>Settings</legend>
@@ -48,6 +47,8 @@
 		</p>
 		
 	</fieldset>
+	<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
+	<br>
 	<br>
 	<fieldset>
 		<legend>Services</legend>
@@ -64,8 +65,13 @@
 			<input type="checkbox" id="chkSyntax" name="chkSyntax" checked><br>
 		</p>
 	</fieldset>
+	<br>
+	<fieldset>
+		<legend>Server run controls</legend>
+		<input type="radio" class="serverSelector" name="serverRadios" checked>
+		<input type="button" class="one" value="Additional Server" id="startServerBtn" name="startServerBtn"> 	
+	</fieldset>
 </form>
-<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
 
 
 <script src="sbtester.js"></script>

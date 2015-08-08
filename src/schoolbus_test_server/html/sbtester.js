@@ -96,10 +96,6 @@ function SbTesterControl() {
 		
 	}();
 	
-	this.startServer = function() {
-		sendReq({'server' : 'on'});
-	}
-
 	this.submit = function() {
 		parmsDict = {'strLen' : document.getElementById('strLen').value,
 					 'oneShotTopic' : document.getElementById('oneShotTopic').value,
@@ -138,7 +134,27 @@ function SbTesterControl() {
 			ws.send(msg);
 		}
 	}
+
+	this.startServer = function() {
+		sendReq({'server' : 'on'});
+	}
+
+	this.sendOneShot = function() {
+		// Ask server to send a one-shot bus message:
+		sendReq({'oneShot' : 'True'})
+	}
+
+	this.streamingOnOff = function() {
+		sendReq({'streaming' : document.getElementById('streaming').checked ? 'True' : 'False'});
+	}
 	
+	this.echoOnOff = function() {
+		sendReq({'echo' : document.getElementById('echo').checked ? 'True' : 'False'});
+	}
+
+	this.chkSyntaxOnOff = function() {
+		sendReq({'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False'});
+	}
 	
 	var sendReq = function (parmsDict) {
 		// Names of all the server parameters to *change*:
@@ -186,6 +202,12 @@ function SbTesterControl() {
 		serverParmNames = Object.getOwnPropertyNames(respDict);
 		if (serverParmNames.indexOf('error') != -1) {
 			alert('Test server error: ' + respDict['error'])
+			return
+		}
+		
+		if (serverParmNames.indexOf('success') != -1) {
+			// Our request to the server was to do something
+			// without a return, e.g. firing a one-shot message:
 			return
 		}
 		
@@ -275,7 +297,7 @@ function SbTesterControl() {
 			if (res.length != 0) {
 				res += ', ';
 			} 
-			if (Object.prototype.toString.call(element) !== '[Object String]') {
+			if (Object.prototype.toString.call(element) !== '[object String]') {
 				// Against promise: an element isn't a string:
 				res += Object.prototype.toString.call(element);
 			} else {
@@ -293,10 +315,18 @@ var sbTesterControl = new SbTesterControl();
 // when done here)
 //******sbTesterControl.submit();
 
-document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
+	
+document.getElementById('sendOneShotBtn').addEventListener('click', sbTesterControl.sendOneShot);
+
+document.getElementById('streaming').addEventListener('input', sbTesterControl.streamingOnOff);
+document.getElementById('echo').addEventListener('input', sbTesterControl.echoOnOff);
+document.getElementById('chkSyntax').addEventListener('input', sbTesterControl.chkSyntaxOnOff);
+
 document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
 
-window.onload = function() {
+document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
+
+/*window.onload = function() {
 	if (! sbTesterControl.wsReady()) {
 		sbTesterControl.getWs().onreadystatechange = function() {
 			if (sbTesterControl.wsReady()) {
@@ -307,4 +337,4 @@ window.onload = function() {
 		sbTesterControl.submit();
 	}
 };
-
+*/
