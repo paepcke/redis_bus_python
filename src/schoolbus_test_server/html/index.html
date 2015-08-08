@@ -13,6 +13,27 @@
         </fieldset>
 	<br>
 	<fieldset>
+		<legend>Services</legend>
+		<p>
+			<label for="streaming">Continuously stream msgs:</label>
+			<input type="checkbox" id="streaming" name="stream">
+
+			<label class="paddleft" for="interMsgTime">Inter-msg time: </label>
+			<input type="number" id="interMsgTime" name="interMsgTime" maxlength="4">
+			(fractional) secs
+			
+		</p>
+		<p>			
+			<label for="echo">Echo msgs (received on 'echo'):</label>
+			<input type="checkbox" id="echo" name="echo" checked>
+		</p>			
+		<p>
+			<label for="chkSyntax">Accept msg for syntax checking:</label>
+			<input type="checkbox" id="chkSyntax" name="chkSyntax" checked><br>
+		</p>
+	</fieldset>
+	<br>
+	<fieldset>
 		<legend>Settings</legend>
 		<p class="one">
 			<label for="strLen">Length of random strings:</label>
@@ -49,22 +70,6 @@
 	</fieldset>
 	<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
 	<br>
-	<br>
-	<fieldset>
-		<legend>Services</legend>
-		<p>
-			<label for="streaming">Continuously stream msgs:</label>
-			<input type="checkbox" id="streaming" name="stream">
-		</p>
-		<p>			
-			<label for="echo">Echo msgs (received on 'echo'):</label>
-			<input type="checkbox" id="echo" name="echo" checked>
-		</p>			
-		<p>
-			<label for="chkSyntax">Accept msg for syntax checking:</label>
-			<input type="checkbox" id="chkSyntax" name="chkSyntax" checked><br>
-		</p>
-	</fieldset>
 	<br>
 	<fieldset>
 		<legend>Server run controls</legend>

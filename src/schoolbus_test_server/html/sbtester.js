@@ -12,7 +12,7 @@ function SbTesterControl() {
 	var originPort  = 8000;
 	// URL part after the domain and port.
 	// Server expects websocket connections there:
-	var originDir   = 'bus/controller';
+	var originDir   = '/controller';
 	
 	var keepAliveInterval = 15000; /* 15 sec*/
 	
@@ -54,7 +54,7 @@ function SbTesterControl() {
 		}
 		
 		connectAttemptTime = new Date();
-		ws = new WebSocket("ws://" + originHost + "/bus/controller");
+		ws = new WebSocket("ws://" + originHost + originDir);
 		
 		ws.onopen = function() {
 		    keepAliveTimer = window.setInterval(function() {sendKeepAlive()}, keepAliveInterval);
@@ -182,7 +182,7 @@ function SbTesterControl() {
 		
 		newReqDict['server_id'] = uuid == '_' ? '' : uuid; 
 		
-		theUrl = 'http://' + originHost + '/' + originDir;
+		theUrl = 'http://' + originHost + originDir;
 		
 	    send( JSON.stringify( newReqDict ) );
 	}
@@ -318,9 +318,9 @@ var sbTesterControl = new SbTesterControl();
 	
 document.getElementById('sendOneShotBtn').addEventListener('click', sbTesterControl.sendOneShot);
 
-document.getElementById('streaming').addEventListener('input', sbTesterControl.streamingOnOff);
-document.getElementById('echo').addEventListener('input', sbTesterControl.echoOnOff);
-document.getElementById('chkSyntax').addEventListener('input', sbTesterControl.chkSyntaxOnOff);
+// document.getElementById('streaming').addEventListener('input', sbTesterControl.streamingOnOff);
+// document.getElementById('echo').addEventListener('input', sbTesterControl.echoOnOff);
+// document.getElementById('chkSyntax').addEventListener('input', sbTesterControl.chkSyntaxOnOff);
 
 document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
 

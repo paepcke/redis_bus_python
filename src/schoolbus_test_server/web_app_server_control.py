@@ -7,8 +7,9 @@ Created on Aug 1, 2015
 
 TODO:
     o Kill server after alloted time 
-    o JS: one-shot button
-    o Why web_app_server dies with lots of 'Submit Changes' clicking
+    o JS inter-msg time: in web_app_server_control
+    o Additiona servers
+    o Initial submit button 'push'
     
 
 '''
@@ -17,13 +18,15 @@ import datetime
 import json
 import signal
 import time
-import tornado.ioloop
-import tornado.web
 import uuid
 
 from redis_bus_python.bus_message import BusMessage
 from schoolbus_test_server import OnDemandPublisher
+
 from  websocket import WebSocketHandler
+import tornado.ioloop
+import tornado.web
+import httpserver
 
 
 #****from schoolbus_test_server.tornado.websocket import WebSocketHandler
@@ -399,7 +402,7 @@ class BusTesterWebController(WebSocketHandler):
             print("calling stop on %s" % str(server))
             #*********
             server.stop()
-            server.join()
+            server.join(2)
 
     @classmethod  
     def makeApp(self):
@@ -409,7 +412,7 @@ class BusTesterWebController(WebSocketHandler):
         '''
 
         handlers = [
-            (r"/bus/controller", BusTesterWebController),
+            (r"/controller", BusTesterWebController),
             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
             ]
 
@@ -423,10 +426,11 @@ if __name__ == "__main__":
 
     application = BusTesterWebController.makeApp()
 
-    # We need an SSL capable HTTP server:
-    # For configuration without a cert, add "cert_reqs"  : ssl.CERT_NONE
-    # to the ssl_options (though I haven't tried it out.):
-
-    application.listen(BUS_TESTER_SERVER_PORT)
+    http_server = httpserver.HTTPServer(application)
+    http_server.listen(BUS_TESTER_SERVER_PORT)
     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
-    tornado.ioloop.IOLoop.instance().start()
+    try:
+        tornado.ioloop.IOLoop.instance().start()
+    except Exception as e:
+        print('Bombed out of tornado IO loop: %s' % `e`)
+    

@@ -41,3 +41,5 @@ input[type=submit] { background-color: #5794ad;
 				   }
 				   
 input[type=radio].serverSelector  { border: green; }
+
+label.paddleft	{padding-left: 20px; }
