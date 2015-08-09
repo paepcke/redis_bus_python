@@ -33,6 +33,12 @@ SYNTAX_TOPIC = 'bus_syntax'
 # Standard message length:
 STANDARD_MSG_LENGTH = 100
 
+# Standard time interval between messages
+# in continuous-streaming mode: as fast
+# as possible:
+
+STREAM_INTERVAL = 0 
+
 class OnDemandPublisher(threading.Thread):
     '''
     Server for testing Redis bus modules. Started from the
@@ -166,6 +172,7 @@ class OnDemandPublisher(threading.Thread):
         self.echo_topic = ECHO_TOPIC
         self.syntax_check_topic = SYNTAX_TOPIC
         self.standard_msg_len = STANDARD_MSG_LENGTH
+        self._stream_interval = STREAM_INTERVAL
         
         self._stream_topic = STREAM_TOPIC
         self.standard_bus_msg = self.createMessage(STREAM_TOPIC, STANDARD_MSG_LENGTH, content=None)
@@ -332,6 +339,27 @@ class OnDemandPublisher(threading.Thread):
         self.msg_streamer.pause(should_pause)
 
     @property
+    def stream_interval(self):
+        return self._stream_interval
+    
+    @stream_interval.setter
+    def stream_interval(self, new_interval):
+        if new_interval is None or len(new_interval) == 0:
+            new_interval = STREAM_INTERVAL
+        else:
+            # Ensure float, and replace negative
+            # values with 0:
+            try:
+                if float(new_interval) < 0:
+                    new_interval = 0.0
+            except ValueError:
+                raise ValueError("Attempt to set streaming interval to a non-numeric quantity: '%s'" % str(new_interval))
+        
+        self.msg_streamer.stream_interval = new_interval
+        self._stream_interval = new_interval
+
+
+    @property
     def one_shot_topic(self):
         return self._one_shot_topic
     
@@ -407,6 +435,9 @@ class OnDemandPublisher(threading.Thread):
             return self.stream_content
         elif item == 'streaming':
             return self.streaming
+        elif item == 'streamInterval':
+            return self.stream_interval
+        
         
         elif item == 'oneShotTopic':
             return self.one_shot_topic
@@ -450,6 +481,9 @@ class OnDemandPublisher(threading.Thread):
             # Deal with both string and bool:
             new_val = (new_val == 'True' or new_val == True)
             self.streaming = new_val
+        elif item == 'streamInterval':
+            self.stream_interval = new_val
+            
             
         elif item == 'oneShotContent':
             self.one_shot_content = new_val
@@ -727,6 +761,7 @@ class MessageOutStreamer(threading.Thread):
     
         self.done = False
         self._paused = False
+        self._stream_interval = STREAM_INTERVAL
         
     def pause(self, do_pause):
         if do_pause:
@@ -737,6 +772,22 @@ class MessageOutStreamer(threading.Thread):
     @property
     def paused(self):
         return self._paused
+    
+    @property
+    def stream_interval(self):
+        return self._stream_interval
+    
+    @stream_interval.setter
+    def stream_interval(self, new_val):
+        '''
+        Note: we trust that caller ensures new_val to 
+        be a non-negative float. 
+        
+        :param new_val: number of (fractional) seconds to wait between
+            stream messages. Zero means no wait.
+        :type new_val:float
+        '''
+        self._stream_interval = new_val
     
     def change_stream_topic(self, newTopic):
         self.busMsg.topicName = newTopic
@@ -756,6 +807,8 @@ class MessageOutStreamer(threading.Thread):
             self.streamBus.publish(self.busMsg)
             while self._paused:
                 time.sleep(1)
+            if self._stream_interval > 0:
+                time.sleep(self._stream_interval)
             
     def stop(self, signum, frame):
         self.done = True

@@ -1,3 +1,5 @@
+
+var sbTesterControl;
 function SbTesterControl() {
 
 	/* ------------------------------------ Constants ------------------*/
@@ -38,21 +40,11 @@ function SbTesterControl() {
 	this.construct = function() {
 		// Note URL of the host that pulled this JS file
 		// to its browser:
+		originHost
 		if (window.location.host.length != 0) {
 			originHost = window.location.host;
 		};
-		
-		var serverParmForm = document.forms['serverParms'];
-		for (var i=0; i < serverParmForm.length; i++) {
-			widget = serverParmForm[i];
-			if ((widget.type == 'text' ||
-				 widget.type == 'checkbox' ||
-				 widget.type == 'radio') && 
-				widget.id.length > 0){
-			reqTemplate[widget.id] = '';
-			}
-		}
-		
+
 		connectAttemptTime = new Date();
 		ws = new WebSocket("ws://" + originHost + originDir);
 		
@@ -97,17 +89,17 @@ function SbTesterControl() {
 	}();
 	
 	this.submit = function() {
-		parmsDict = {'strLen' : document.getElementById('strLen').value,
-					 'oneShotTopic' : document.getElementById('oneShotTopic').value,
-					 'oneShotContent' : document.getElementById('oneShotContent').value,
-					 'streamTopic' : document.getElementById('streamTopic').value,
-					 'streamContent' : document.getElementById('streamContent').value,
-					 'syntaxTopic' : document.getElementById('syntaxTopic').value,
-					 'discardTopics' : document.getElementById('discardTopics').value,
-					 
-					 'streaming' : document.getElementById('streaming').checked ? 'True' : 'False',
-					 'echo' : document.getElementById('echo').checked ? 'True' : 'False',
-					 'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False',
+		var parmsDict = {'strLen' : document.getElementById('strLen').value,
+					     'oneShotTopic' : document.getElementById('oneShotTopic').value,
+					     'oneShotContent' : document.getElementById('oneShotContent').value,
+					     'streamTopic' : document.getElementById('streamTopic').value,
+					     'streamContent' : document.getElementById('streamContent').value,
+					     'streamInterval' : document.getElementById('streamInterval').value,
+					     'syntaxTopic' : document.getElementById('syntaxTopic').value,
+					     'discardTopics' : document.getElementById('discardTopics').value,
+					     'streaming' : document.getElementById('streaming').checked ? 'True' : 'False',
+					     'echo' : document.getElementById('echo').checked ? 'True' : 'False',
+					     'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False',
 		}
 		sendReq(parmsDict);
 	}
@@ -119,7 +111,7 @@ function SbTesterControl() {
 	this.getWs = function() {
 		return ws;
 	}
-	
+
 	var send = function(msg) {
 		if (ws.readyState != READY_STATE) {
 			ws.onreadystatechange = function(msg) {
@@ -136,7 +128,24 @@ function SbTesterControl() {
 	}
 
 	this.startServer = function() {
-		sendReq({'server' : 'on'});
+		// Simply add a radio button to the bank of
+		// available-servers bank:
+		var serverRadios = document.getElementsByName('serverRadios')
+		var radioInput = document.createElement('input');
+		radioInput.setAttribute('type', 'radio');
+		radioInput.setAttribute('name', 'serverRadios');
+		// Indicate that we don't yet have a server ID
+		// for this radio button. The next request will
+		// update the id:
+		radioInput.id = '';
+		radioInput.checked = true;
+		// Add the new radio button just before the
+		// 'Additional Server' button:
+		var additionalServerBtn = document.getElementById('startServerBtn');
+		document.getElementById('servers').insertBefore(radioInput, additionalServerBtn);
+		
+		// Trigger a request to the server with all-empty parameter fields:
+		sendReq(getEmptyServerParmForm());
 	}
 
 	this.sendOneShot = function() {
@@ -158,15 +167,16 @@ function SbTesterControl() {
 	
 	var sendReq = function (parmsDict) {
 		// Names of all the server parameters to *change*:
-		reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
+		var reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
 		
 		// Make a copy of the just-ask-for-all-values
 		// request dict:
-		newReqDict = cloneReqTemplate();
-		allReqKeys = Object.getOwnPropertyNames(newReqDict);
+		var newReqDict = getEmptyServerParmForm();
+		var allReqKeys = Object.getOwnPropertyNames(newReqDict);
 
 		// Replace the 'request-cur-parm-val' values 
-		// in newReqDict with the desired new values:
+		// in newReqDict with the desired new values
+		// as specified in the parmsDict:
 		
 		for (var i=0; i<reqKeysToChange.length; i++) {
 			newReqDict[reqKeysToChange[i]] = parmsDict[reqKeysToChange[i]];
@@ -180,9 +190,7 @@ function SbTesterControl() {
 		// set the server id in the request dict 
 		// to the empty string; else to the uuid:
 		
-		newReqDict['server_id'] = uuid == '_' ? '' : uuid; 
-		
-		theUrl = 'http://' + originHost + originDir;
+		newReqDict['server_id'] = uuid;
 		
 	    send( JSON.stringify( newReqDict ) );
 	}
@@ -199,7 +207,7 @@ function SbTesterControl() {
 		 */
 		
 		
-		serverParmNames = Object.getOwnPropertyNames(respDict);
+		var serverParmNames = Object.getOwnPropertyNames(respDict);
 		if (serverParmNames.indexOf('error') != -1) {
 			alert('Test server error: ' + respDict['error'])
 			return
@@ -212,11 +220,14 @@ function SbTesterControl() {
 		}
 		
 		// Grab the server_id from the return:
-		serverId = respDict['server_id'];
-		serverRadioBtn = getCheckedServerRadioBtn();
+		var serverId = respDict['server_id'];
+		var serverRadioBtn = getCheckedServerRadioBtn();
 		testServers[serverId] = serverRadioBtn;
 		serverRadioBtn.id = serverId;
 		
+		var parmName;
+		var newVal;
+		var widget;
 		for (var i=0; i<serverParmNames.length; i++) {
 			parmName = serverParmNames[i];
 			newVal = respDict[parmName];
@@ -246,9 +257,28 @@ function SbTesterControl() {
 		}
 	}
 	
+	var getEmptyServerParmForm = function() {
+		var serverParmForm = document.forms['serverParms'];
+		var resDict = {};
+		var widget = undefined;
+		for (var i=0; i < serverParmForm.length; i++) {
+			widget = serverParmForm[i];
+			if ((widget.type == 'text' ||
+					 widget.type == 'textarea' ||
+					 widget.type == 'checkbox' ||
+					 widget.type == 'radio' ||
+					 widget.type == 'number') && 
+				 widget.id.length > 0){
+				resDict[widget.id] = '';
+			}
+		}
+		return resDict;
+	}
+
+	
 	var cloneReqTemplate = function() {
 		var newTemplate = {}
-		propNames = Object.getOwnPropertyNames(reqTemplate);
+		var propNames = Object.getOwnPropertyNames(reqTemplate);
 		for (var i=0; i<propNames.length; i++ ) {
 			key = propNames[i];
 			if (reqTemplate.hasOwnProperty(key)) {
@@ -291,7 +321,8 @@ function SbTesterControl() {
 			return obj
 		} 
 		// It's an array
-		res = ''
+		var res = '';
+		var element;
 		for (var i=0; i<obj.length; i++) {
 			element = obj[i];
 			if (res.length != 0) {
@@ -308,25 +339,38 @@ function SbTesterControl() {
 	}
 }
 
-var sbTesterControl = new SbTesterControl();
-
-// Fill in the fields with actual server parm values:
-// (Race condition with Websocket connection process
-// when done here)
-//******sbTesterControl.submit();
-
-	
-document.getElementById('sendOneShotBtn').addEventListener('click', sbTesterControl.sendOneShot);
+document.getElementById('sendOneShotBtn').addEventListener('click', SbTesterControl.sendOneShot);
 
 // document.getElementById('streaming').addEventListener('input', sbTesterControl.streamingOnOff);
 // document.getElementById('echo').addEventListener('input', sbTesterControl.echoOnOff);
 // document.getElementById('chkSyntax').addEventListener('input', sbTesterControl.chkSyntaxOnOff);
 
-document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
+document.getElementById('submitBtn').addEventListener('click', SbTesterControl.submit);
 
-document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
+document.getElementById('startServerBtn').addEventListener('click', SbTesterControl.startServer);
 
-/*window.onload = function() {
+
+
+/*if (typeof sbTesterControl === "undefined") {
+	sbTesterControl = new SbTesterControl();
+
+	// Fill in the fields with actual server parm values:
+	// (Race condition with Websocket connection process
+	// when done here)
+	//******sbTesterControl.submit();
+	
+		
+	document.getElementById('sendOneShotBtn').addEventListener('click', sbTesterControl.sendOneShot);
+	
+	// document.getElementById('streaming').addEventListener('input', sbTesterControl.streamingOnOff);
+	// document.getElementById('echo').addEventListener('input', sbTesterControl.echoOnOff);
+	// document.getElementById('chkSyntax').addEventListener('input', sbTesterControl.chkSyntaxOnOff);
+	
+	document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
+	
+	document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
+}
+*//*window.onload = function() {
 	if (! sbTesterControl.wsReady()) {
 		sbTesterControl.getWs().onreadystatechange = function() {
 			if (sbTesterControl.wsReady()) {

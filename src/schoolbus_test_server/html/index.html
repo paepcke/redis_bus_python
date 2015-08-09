@@ -18,8 +18,8 @@
 			<label for="streaming">Continuously stream msgs:</label>
 			<input type="checkbox" id="streaming" name="stream">
 
-			<label class="paddleft" for="interMsgTime">Inter-msg time: </label>
-			<input type="number" id="interMsgTime" name="interMsgTime" maxlength="4">
+			<label class="paddleft" for="streamInterval">Inter-msg time: </label>
+			<input type="number" id="streamInterval" name="streamInterval">
 			(fractional) secs
 			
 		</p>
@@ -71,7 +71,7 @@
 	<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
 	<br>
 	<br>
-	<fieldset>
+	<fieldset id="servers">
 		<legend>Server run controls</legend>
 		<input type="radio" class="serverSelector" name="serverRadios" checked>
 		<input type="button" class="one" value="Additional Server" id="startServerBtn" name="startServerBtn"> 	

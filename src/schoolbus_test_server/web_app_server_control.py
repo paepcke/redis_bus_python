@@ -10,6 +10,9 @@ TODO:
     o JS inter-msg time: in web_app_server_control
     o Additiona servers
     o Initial submit button 'push'
+    o Documentation: mention what server should return
+        in returned dict, incl. 
+            'error' and 'success' 
     
 
 '''
@@ -23,10 +26,10 @@ import uuid
 from redis_bus_python.bus_message import BusMessage
 from schoolbus_test_server import OnDemandPublisher
 
-from  websocket import WebSocketHandler
+from  tornado.websocket import WebSocketHandler
 import tornado.ioloop
 import tornado.web
-import httpserver
+import tornado.httpserver
 
 
 #****from schoolbus_test_server.tornado.websocket import WebSocketHandler
@@ -75,8 +78,8 @@ class BusTesterWebController(WebSocketHandler):
         self.title = "SchoolBus Tester"
         super(BusTesterWebController, self).__init__(application, request, **kwargs)
         
-        #self.loglevel = BusTesterWebController.LOG_LEVEL_DEBUG
-        self.loglevel = BusTesterWebController.LOG_LEVEL_INFO
+        self.loglevel = BusTesterWebController.LOG_LEVEL_DEBUG
+        #self.loglevel = BusTesterWebController.LOG_LEVEL_INFO
         #self.loglevel = BusTesterWebController.LOG_LEVEL_NONE
         
         # This instance is created to serve one request
@@ -105,6 +108,9 @@ class BusTesterWebController(WebSocketHandler):
         '''
         self.logDebug("Open called")
         
+    def close(self):
+        self.logDebug('Websocket was closed.')
+        
     def on_message (self, msg):
         
         if (msg == 'keepAlive'):
@@ -128,7 +134,7 @@ class BusTesterWebController(WebSocketHandler):
         server_id_in_req =  msg_dict.get('server_id', '')
         self.test_server_id = None if len(server_id_in_req) == 0 else server_id_in_req
         # Remove the server_id from the reqDict b/c we
-        # are now dealing with it:
+        # are taking care of it here:
         try:
             del(msg_dict['server_id'])
         except:
@@ -251,13 +257,14 @@ class BusTesterWebController(WebSocketHandler):
             # Special cases: oneShotContent and echoContent: setting
             # values of length 0 means: set to default strings of standard
             # length, so the next branch of this conditional is the
-            # one to take for these two cases; other zero-length values
+            # one to take for these cases; other zero-length values
             # indicate request for current value:
             if len(str(parm_val)) == 0 and \
                    self.my_server is not None and \
                    parm_name != 'oneShotContent' and \
                    parm_name != 'echoContent' and \
-                   parm_name != 'streamContent':
+                   parm_name != 'streamContent' and \
+                   parm_name != 'streamInterval':
                 # Return current value:
                 response_dict[parm_name] =  self.my_server[parm_name]
                 return response_dict
@@ -416,7 +423,7 @@ class BusTesterWebController(WebSocketHandler):
             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
             ]
 
-        application = tornado.web.Application(handlers , debug=True)
+        application = tornado.web.Application(handlers , debug=False)
         
         return application
 
@@ -425,8 +432,16 @@ signal.signal(signal.SIGINT, BusTesterWebController.shutdown)
 if __name__ == "__main__":
 
     application = BusTesterWebController.makeApp()
+    
+    # Starting multiple Python processes on multiple cores:
+#     server = tornado.httpserver.HTTPServer(application)
+#     server.bind(BUS_TESTER_SERVER_PORT)
+#     server.start(0)  # Forks multiple sub-processes
+#     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
+#     tornado.ioloop.IOLoop.instance().start()
+    
 
-    http_server = httpserver.HTTPServer(application)
+    http_server = tornado.httpserver.HTTPServer(application)
     http_server.listen(BUS_TESTER_SERVER_PORT)
     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
     try:
