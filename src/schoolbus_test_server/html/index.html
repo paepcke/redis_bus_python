@@ -16,7 +16,7 @@
 		<legend>Services</legend>
 		<p>
 			<label for="streaming">Continuously stream msgs:</label>
-			<input type="checkbox" id="streaming" name="stream">
+			<input type="checkbox" id="streaming" name="streaming">
 
 			<label class="paddleft" for="streamInterval">Inter-msg time: </label>
 			<input type="number" id="streamInterval" name="streamInterval">
@@ -68,13 +68,14 @@
 		</p>
 		
 	</fieldset>
-	<input type="submit" class="one" value="Submit Changes" id="submitBtn"> 	
+	<input type="button" class="one" value="Submit Changes" id="submitBtn"> 	
 	<br>
 	<br>
-	<fieldset id="servers">
+	<fieldset id="servers" disabled>
 		<legend>Server run controls</legend>
 		<input type="radio" class="serverSelector" name="serverRadios" checked>
-		<input type="button" class="one" value="Additional Server" id="startServerBtn" name="startServerBtn"> 	
+		<input type="button" class="one" value="Additional Server" id="startServerBtn" name="startServerBtn">
+		<input type="button" class="one" value="Kill Selected Server" id="stopServerBtn" name="stopServerBtn">
 	</fieldset>
 </form>
 

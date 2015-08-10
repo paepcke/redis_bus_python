@@ -17,19 +17,20 @@ TODO:
 
 '''
 
+from datetime import timedelta
 import datetime
 import json
 import signal
+import sys
 import time
+import tornado.httpserver
+import tornado.ioloop
+import tornado.web
+from  tornado.websocket import WebSocketHandler
 import uuid
 
 from redis_bus_python.bus_message import BusMessage
 from schoolbus_test_server import OnDemandPublisher
-
-from  tornado.websocket import WebSocketHandler
-import tornado.ioloop
-import tornado.web
-import tornado.httpserver
 
 
 #****from schoolbus_test_server.tornado.websocket import WebSocketHandler
@@ -111,6 +112,9 @@ class BusTesterWebController(WebSocketHandler):
     def close(self):
         self.logDebug('Websocket was closed.')
         
+    def on_close(self):
+        self.logDebug('Websocket was closed.')
+        
     def on_message (self, msg):
         
         if (msg == 'keepAlive'):
@@ -139,17 +143,41 @@ class BusTesterWebController(WebSocketHandler):
             del(msg_dict['server_id'])
         except:
             pass
+        
+        # Special command: killServer takes a server ID, which hopefully
+        # keys to a running schoolbus test server (OnDemandPublisher).
+        # Find that server, close it, and return:
+        
+        if msg_dict.get('killServer', None) is not None:
+            self.kill_a_server(msg_dict['killServer'])
+            self.write_message(json.dumps({'success' : 'OK'}))
+            return 
+        
         if self.test_server_id is None or len(self.test_server_id) == 0:
             # First contact by this browser tab; 
             # Have my_server() create an OnDemandPublisher,
             # and associate it with a UUID in test_servers:
             self.my_server
 
-        # Turn 'True' and 'False' values into bools:
-        msg_dict['chkSyntax'] = True if msg_dict.get('chkSyntax', None) == 'True' else False
-        msg_dict['echo'] = True if msg_dict.get('echo', None) == 'True' else False
-        msg_dict['streaming'] = True if msg_dict.get('streaming', None) == 'True' else False
+        # Turn string values 'True', 'False', 'on', 'off' into bools:
+        chkSyntax = msg_dict.get('chkSyntax', None)
+        echo      = msg_dict.get('echo', None)
+        streaming = msg_dict.get('streaming', None)
+        msg_dict['chkSyntax'] = True if chkSyntax == 'True' or chkSyntax == 'on' else False
+        msg_dict['echo'] = True if echo == 'True' or echo == 'on' else False
+        msg_dict['streaming'] = True if streaming == 'True' or streaming == 'on' else False
             
+        # Ensure that streamInterval is a float:
+        try:
+            interval = msg_dict.get('streamInterval', None)
+            # If empty string, indicating request for current
+            # value, the call to get_or_set_server_parm() will
+            # take care of it. But otherwise, floatify:
+            if interval != '':
+                msg_dict['streamInterval'] =  float(interval)
+        except (ValueError, TypeError):
+            self.return_error({}, "Received a non-float for streamInterval from browser: '%s'" % str(interval))
+            return
 
         response_dict = {}
         
@@ -263,8 +291,7 @@ class BusTesterWebController(WebSocketHandler):
                    self.my_server is not None and \
                    parm_name != 'oneShotContent' and \
                    parm_name != 'echoContent' and \
-                   parm_name != 'streamContent' and \
-                   parm_name != 'streamInterval':
+                   parm_name != 'streamContent':
                 # Return current value:
                 response_dict[parm_name] =  self.my_server[parm_name]
                 return response_dict
@@ -348,17 +375,17 @@ class BusTesterWebController(WebSocketHandler):
         server.check_syntax = True
         return server
         
-    def stopServer(self, responseDict):
-        # Truly stop the server; to start again, a new
-        # instance will be created, b/c the server is a
-        # thread:
-        if self.server_running():
-            self.my_server.stop()
-        self.test_servers[self] = None
-
-        responseDict['server'] = 'OFF'
-        return responseDict
-    
+    def kill_a_server(self, serverId):
+        (server_to_kill, kill_time) = self.test_servers.get(serverId, (None, None)) #@UnusedVariable
+        if server_to_kill is None:
+            # Browser app passed a server id that we don't know about:
+            self.return_error({}, "Warning: attempt to kill server '%s', which is not running." % str(serverId))
+            raise ValueError("Warning: attempt to kill server '%s', which is not running.")
+        if server_to_kill.is_running():
+            server_to_kill.stop()
+            server_to_kill.join(2)
+            del self.test_servers[serverId]
+                                       
     def server_running(self):
         try:
             return self.test_servers[self].running
@@ -410,6 +437,7 @@ class BusTesterWebController(WebSocketHandler):
             #*********
             server.stop()
             server.join(2)
+            sys.exit()
 
     @classmethod  
     def makeApp(self):
@@ -440,12 +468,16 @@ if __name__ == "__main__":
 #     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
 #     tornado.ioloop.IOLoop.instance().start()
     
+    def set_ping(ioloop, timeout):
+        ioloop.add_timeout(timeout, lambda: set_ping(ioloop, timeout))
 
     http_server = tornado.httpserver.HTTPServer(application)
     http_server.listen(BUS_TESTER_SERVER_PORT)
     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
     try:
-        tornado.ioloop.IOLoop.instance().start()
+        ioloop = tornado.ioloop.IOLoop.instance()
+        set_ping(ioloop, timedelta(seconds=2))
+        ioloop.start()
     except Exception as e:
         print('Bombed out of tornado IO loop: %s' % `e`)
     

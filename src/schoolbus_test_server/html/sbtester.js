@@ -22,13 +22,6 @@ function SbTesterControl() {
 
 	var keepAliveTimer    = null;
 
-	// Will be filled by constructor with 
-	// all UI elements as keys, and empty strings
-	// as values. When a request for a param change
-	// on the server is made, just that parameter
-	// value is modified in reqTemplate:
-	var reqTemplate = {};
-	
 	// Dict mapping UUIDs from test server to
 	// server-selection radio button widgets:
 	var testServers = {}
@@ -134,20 +127,62 @@ function SbTesterControl() {
 		var radioInput = document.createElement('input');
 		radioInput.setAttribute('type', 'radio');
 		radioInput.setAttribute('name', 'serverRadios');
+		radioInput.setAttribute('class', 'serverSelector');
 		// Indicate that we don't yet have a server ID
 		// for this radio button. The next request will
 		// update the id:
 		radioInput.id = '';
 		radioInput.checked = true;
+		radioInput.addEventListener('change', switchServer);		
 		// Add the new radio button just before the
 		// 'Additional Server' button:
 		var additionalServerBtn = document.getElementById('startServerBtn');
 		document.getElementById('servers').insertBefore(radioInput, additionalServerBtn);
 		
+		// If more than one server exists now, enable the
+		// kill server button:
+		
+		if (document.getElementsByName('serverRadios').length > 1) {
+			document.getElementById('stopServerBtn').disabled = false;
+		}
+		
 		// Trigger a request to the server with all-empty parameter fields:
 		sendReq(getEmptyServerParmForm());
 	}
 
+	this.killServer = function() {
+		
+		// Can't kill last server:
+		if (document.getElementsByName('serverRadios').length === 1) {
+			alert("Can't kill last server.");
+			return;
+		}
+		
+		// Get server ID associated with currently checked
+		// server selection radio button:
+		var checkedServerId = getCheckedServerId();
+		
+		// Get checked radio widget:
+		var chkBoxToRemove  = getCheckedServerRadioBtn();
+		
+		// Via the radio button's parent, remove the radio button:
+		chkBoxToRemove.parentNode.removeChild(chkBoxToRemove);
+		
+		// Disable kill server button if only one checkbox left:
+		if (document.getElementsByName('serverRadios').length === 1) {
+			document.getElementById('stopServerBtn').disabled = true;
+		}
+		
+		// Tell server that we no longer need the server
+		// with the given server ID:
+		sendReq({'killServer' : checkedServerId});
+		
+		// Now select the first radio button (without this
+		// no button will be selected:
+		document.getElementsByName('serverRadios')[0].checked = true;
+		
+	}
+	
 	this.sendOneShot = function() {
 		// Ask server to send a one-shot bus message:
 		sendReq({'oneShot' : 'True'})
@@ -169,30 +204,34 @@ function SbTesterControl() {
 		// Names of all the server parameters to *change*:
 		var reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
 		
+		/* ********
 		// Make a copy of the just-ask-for-all-values
 		// request dict:
 		var newReqDict = getEmptyServerParmForm();
-		var allReqKeys = Object.getOwnPropertyNames(newReqDict);
-
+		***************/
+		// Get a dict of all current field values:
+		var currReqDict = getCurrLocalFields();
+		
 		// Replace the 'request-cur-parm-val' values 
 		// in newReqDict with the desired new values
 		// as specified in the parmsDict:
 		
 		for (var i=0; i<reqKeysToChange.length; i++) {
-			newReqDict[reqKeysToChange[i]] = parmsDict[reqKeysToChange[i]];
+			currReqDict[reqKeysToChange[i]] = parmsDict[reqKeysToChange[i]];
 		}
 
 		// Add the server UUID so that the test server can
 		// find the already existing SchoolBus server:
-		var uuid = getCheckedServerId();
+		currReqDict['server_id'] = getCheckedServerId();
 		
-		// If uuid is the placeholder '_' then 
-		// set the server id in the request dict 
-		// to the empty string; else to the uuid:
-		
-		newReqDict['server_id'] = uuid;
-		
-	    send( JSON.stringify( newReqDict ) );
+	    send( JSON.stringify( currReqDict ) );
+	}
+	
+
+	var switchServer = function() {
+		// Called when a server radio button goes checked:
+		// Get ID of checked server radio button:
+		sendReq(getEmptyServerParmForm());
 	}
 	
 	var processServerResponse = function(respDict) {
@@ -221,9 +260,15 @@ function SbTesterControl() {
 		
 		// Grab the server_id from the return:
 		var serverId = respDict['server_id'];
+		// Give the currently selected server radio button
+		// the server id as an ID, and save the server ID:
 		var serverRadioBtn = getCheckedServerRadioBtn();
 		testServers[serverId] = serverRadioBtn;
 		serverRadioBtn.id = serverId;
+		
+		// Check whether this server id matches the one
+		// session storage; if not, update session storage:
+		//   sessionStorage.setItem('serverId', serverId)
 		
 		var parmName;
 		var newVal;
@@ -246,9 +291,11 @@ function SbTesterControl() {
 				
 		
 			} else if ((widget.type == 'text') ||
-					   (widget.type == 'textarea')) {
+					   (widget.type == 'textarea') ||
+					   (widget.type == 'number')) {
 				// 
 				document.getElementById(parmName).value = txtArrayToStr(newVal);
+				
 			} else {
 				// Some other widget that doesn't correspond to a server parameter:
 				continue
@@ -263,29 +310,54 @@ function SbTesterControl() {
 		var widget = undefined;
 		for (var i=0; i < serverParmForm.length; i++) {
 			widget = serverParmForm[i];
+			// The form has many administrative elements
+			// that we don't care about; filter out the ones
+			// that truly are visible user input fields/buttons:
 			if ((widget.type == 'text' ||
 					 widget.type == 'textarea' ||
 					 widget.type == 'checkbox' ||
 					 widget.type == 'radio' ||
 					 widget.type == 'number') && 
-				 widget.id.length > 0){
+				 ((widget.id.length > 0) &&
+					 (widget.className !== 'serverSelector'))
+			) {
 				resDict[widget.id] = '';
 			}
 		}
 		return resDict;
 	}
-
 	
-	var cloneReqTemplate = function() {
-		var newTemplate = {}
-		var propNames = Object.getOwnPropertyNames(reqTemplate);
-		for (var i=0; i<propNames.length; i++ ) {
-			key = propNames[i];
-			if (reqTemplate.hasOwnProperty(key)) {
-				newTemplate[key] = reqTemplate[key];
+	var getCurrLocalFields = function() {
+		var serverParmForm = document.forms['serverParms'];
+		var resDict = {};
+		var widget = undefined;
+		for (var i=0; i < serverParmForm.length; i++) {
+			widget = serverParmForm[i];
+			
+			// Filter out the server selection radio buttons,
+			// since they are only of local significance; the
+			// server won't know what to do with them:
+			if (widget.className === 'serverSelector') {
+				continue
+			}
+			
+			// The form has many administrative elements
+			// that we don't care about; filter out the ones
+			// that truly are visible user input fields/buttons:
+			if ((widget.type == 'text' ||
+					widget.type == 'textarea' ||
+					widget.type == 'radio' ||
+					widget.type == 'number') && 
+					((widget.id.length > 0) &&
+							(widget.className !== 'serverSelector'))
+			) {
+				resDict[widget.id] = widget.value;
+			} else if (widget.type == 'checkbox' ||
+					   	widget.type == 'radio') {
+				resDict[widget.id] = widget.checked;
 			}
 		}
-		return newTemplate;
+		return resDict;
 	}
 	
 	var getCheckedServerId = function() {
@@ -339,46 +411,25 @@ function SbTesterControl() {
 	}
 }
 
-document.getElementById('sendOneShotBtn').addEventListener('click', SbTesterControl.sendOneShot);
+var sbTesterControl;
+window.onload = function() {
 
-// document.getElementById('streaming').addEventListener('input', sbTesterControl.streamingOnOff);
-// document.getElementById('echo').addEventListener('input', sbTesterControl.echoOnOff);
-// document.getElementById('chkSyntax').addEventListener('input', sbTesterControl.chkSyntaxOnOff);
-
-document.getElementById('submitBtn').addEventListener('click', SbTesterControl.submit);
-
-document.getElementById('startServerBtn').addEventListener('click', SbTesterControl.startServer);
-
-
-
-/*if (typeof sbTesterControl === "undefined") {
 	sbTesterControl = new SbTesterControl();
-
-	// Fill in the fields with actual server parm values:
-	// (Race condition with Websocket connection process
-	// when done here)
-	//******sbTesterControl.submit();
 	
-		
 	document.getElementById('sendOneShotBtn').addEventListener('click', sbTesterControl.sendOneShot);
 	
-	// document.getElementById('streaming').addEventListener('input', sbTesterControl.streamingOnOff);
-	// document.getElementById('echo').addEventListener('input', sbTesterControl.echoOnOff);
-	// document.getElementById('chkSyntax').addEventListener('input', sbTesterControl.chkSyntaxOnOff);
+	document.getElementById('streaming').addEventListener('change', sbTesterControl.streamingOnOff);
+	document.getElementById('echo').addEventListener('change', sbTesterControl.echoOnOff);
+	document.getElementById('chkSyntax').addEventListener('change', sbTesterControl.chkSyntaxOnOff);
 	
 	document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
 	
 	document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
+	document.getElementsByName('serverRadios')[0].addEventListener('change', sbTesterControl.switchServer)
+	document.getElementById('stopServerBtn').addEventListener('click', sbTesterControl.killServer);
+	document.getElementById('startServerBtn').disabled = true;
+	document.getElementById('stopServerBtn').disabled = true;
+	
+	// Have the form fields filled in with current server parameter values: 
+	//******sbTesterControl.submit();
 }
-*//*window.onload = function() {
-	if (! sbTesterControl.wsReady()) {
-		sbTesterControl.getWs().onreadystatechange = function() {
-			if (sbTesterControl.wsReady()) {
-				sbTesterControl.submit();
-			}
-		}
-	} else {
-		sbTesterControl.submit();
-	}
-};
-*/

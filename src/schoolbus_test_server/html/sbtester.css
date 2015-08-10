@@ -36,6 +36,9 @@ textarea.content {width: 500px;
 input[type=button] { background-color: #5794ad;
 					 color: white; 
 				   }				
+
+input[type=button]:disabled { background-color: gray; }				   
+				   
 input[type=submit] { background-color: #5794ad;
 					 color: white; 
 				   }
@@ -43,3 +46,4 @@ input[type=submit] { background-color: #5794ad;
 input[type=radio].serverSelector  { border: green; }
 
 label.paddleft	{padding-left: 20px; }
+

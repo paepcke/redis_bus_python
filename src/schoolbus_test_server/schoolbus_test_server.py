@@ -344,9 +344,11 @@ class OnDemandPublisher(threading.Thread):
     
     @stream_interval.setter
     def stream_interval(self, new_interval):
-        if new_interval is None or len(new_interval) == 0:
+        # If the new value is not a number or empty str, set to default:
+        if type(new_interval) == str  and len(new_interval) == 0:
             new_interval = STREAM_INTERVAL
         else:
+            # Non-empty string or number; 
             # Ensure float, and replace negative
             # values with 0:
             try:
