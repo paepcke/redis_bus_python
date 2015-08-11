@@ -431,5 +431,5 @@ window.onload = function() {
 	document.getElementById('stopServerBtn').disabled = true;
 	
 	// Have the form fields filled in with current server parameter values: 
-	//******sbTesterControl.submit();
+	sbTesterControl.submit();
 }

@@ -17,11 +17,14 @@ TODO:
 
 '''
 
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+
 from datetime import timedelta
 import datetime
 import json
 import signal
-import sys
 import time
 import tornado.httpserver
 import tornado.ioloop
@@ -61,8 +64,6 @@ class BusTesterWebController(WebSocketHandler):
     # abandoned:
     
     DEFAULT_TIME_TO_LIVE = 2.0 * 3600.0 # hrs * sec/hr
-    
-    HTML_CLOSE = "</body></html>"
     
     LOG_LEVEL_NONE  = 0
     LOG_LEVEL_ERR   = 1
@@ -109,11 +110,14 @@ class BusTesterWebController(WebSocketHandler):
         '''
         self.logDebug("Open called")
         
-    def close(self):
-        self.logDebug('Websocket was closed.')
-        
+     
     def on_close(self):
-        self.logDebug('Websocket was closed.')
+        self.logDebug('Websocket was closed; shutting down school test server...')
+        try:
+            BusTesterWebController.test_servers[self.test_server_id].stop()
+        except Exception as e:
+            print('Could not shut school test server down: %s' % `e`)
+            
         
     def on_message (self, msg):
         
@@ -455,7 +459,7 @@ class BusTesterWebController(WebSocketHandler):
             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
             ]
 
-        application = tornado.web.Application(handlers , debug=True)
+        application = tornado.web.Application(handlers , debug=False)
         
         return application
 
