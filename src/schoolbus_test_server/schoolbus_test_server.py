@@ -722,7 +722,7 @@ class OnDemandPublisher(threading.Thread):
         self.done = True
         self.interruptEvent.set()
         try:
-            self.msg_streamer.stop()
+            self.msg_streamer.stop(signum=None, signum=None)
             self.msg_streamer.join(1)
         except Exception as e:
             print("Error while shutting down message streamer thread: '%s'" % `e`)

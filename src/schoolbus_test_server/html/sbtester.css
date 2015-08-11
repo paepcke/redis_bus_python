@@ -10,7 +10,11 @@ hr.partial {width: 20%;
 			margin: 0px;
 			margin-top: 20px;
 			margin-bottom: 20px;
-	} 
+			} 
+
+hr.major   {border-width : 3px;
+			border-style : inset; 
+			}
 
 form.inputFields  { display: table;		 }
 
@@ -31,7 +35,14 @@ legend {font-weight: bold; }
 textarea.content {width: 500px;
 		  	 	  height: 100px;
 		  	 	  background-color: #cacaca;
-				}
+ 				 }
+
+textarea.inmsgs {width  : 100%;
+                 height : 400px;
+                 background-color  : #1580ad;
+                 border: groove 3px #0b2ba3;
+                 font-color : white;
+                 }
 
 input[type=button] { background-color: #5794ad;
 					 color: white; 
@@ -47,3 +58,4 @@ input[type=radio].serverSelector  { border: green; }
 
 label.paddleft	{padding-left: 20px; }
 
+fieldset#servers { display: none;}
