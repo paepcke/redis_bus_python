@@ -163,9 +163,13 @@ class BusTesterWebController(WebSocketHandler):
         chkSyntax = msg_dict.get('chkSyntax', None)
         echo      = msg_dict.get('echo', None)
         streaming = msg_dict.get('streaming', None)
-        msg_dict['chkSyntax'] = True if chkSyntax == 'True' or chkSyntax == 'on' else False
-        msg_dict['echo'] = True if echo == 'True' or echo == 'on' else False
-        msg_dict['streaming'] = True if streaming == 'True' or streaming == 'on' else False
+        
+        if type(chkSyntax) == str:
+            msg_dict['chkSyntax'] = True if chkSyntax.lower() == 'true' or chkSyntax == 'on' else False
+        if type(echo) == str:            
+            msg_dict['echo'] = True if echo.lower() == 'true' or echo == 'on' else False
+        if type(streaming) == str:            
+            msg_dict['streaming'] = True if streaming.lower() == 'true' or streaming == 'on' else False
             
         # Ensure that streamInterval is a float:
         try:
@@ -451,7 +455,7 @@ class BusTesterWebController(WebSocketHandler):
             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
             ]
 
-        application = tornado.web.Application(handlers , debug=False)
+        application = tornado.web.Application(handlers , debug=True)
         
         return application
 
@@ -468,6 +472,12 @@ if __name__ == "__main__":
 #     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
 #     tornado.ioloop.IOLoop.instance().start()
     
+    # The following set_ping() function is a timeout
+    # callback that is installed just before ioloop.start()
+    # below. It gets the ioloop out every 2 seconds. The hope 
+    # was that this make Cnt-C work. It didn't. The timeout 
+    # still here just to allow for debugging: set a breakpoint
+    # in set_ping() so see what's going on: 
     def set_ping(ioloop, timeout):
         ioloop.add_timeout(timeout, lambda: set_ping(ioloop, timeout))
 
