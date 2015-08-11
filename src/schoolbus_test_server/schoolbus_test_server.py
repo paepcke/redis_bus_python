@@ -721,6 +721,12 @@ class OnDemandPublisher(threading.Thread):
     def stop(self, signum=None, frame=None):
         self.done = True
         self.interruptEvent.set()
+        try:
+            self.msg_streamer.stop()
+            self.msg_streamer.join(1)
+        except Exception as e:
+            print("Error while shutting down message streamer thread: '%s'" % `e`)
+        
         
     def printTiming(self, startTime=None):
         currTime = time.time()

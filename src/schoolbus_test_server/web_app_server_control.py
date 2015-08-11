@@ -37,7 +37,10 @@ from schoolbus_test_server import OnDemandPublisher
 
 
 #****from schoolbus_test_server.tornado.websocket import WebSocketHandler
+#**********
 BUS_TESTER_SERVER_PORT = 8000
+#BUS_TESTER_SERVER_PORT = 80
+#**********
 
 class BusTesterWebController(WebSocketHandler):
     '''
@@ -114,7 +117,9 @@ class BusTesterWebController(WebSocketHandler):
     def on_close(self):
         self.logDebug('Websocket was closed; shutting down school test server...')
         try:
-            BusTesterWebController.test_servers[self.test_server_id].stop()
+            (server, kill_time) = BusTesterWebController.test_servers[self.test_server_id] #@UnusedVariable
+            server.stop()
+            server.join(2)
         except Exception as e:
             print('Could not shut school test server down: %s' % `e`)
             
@@ -453,11 +458,15 @@ class BusTesterWebController(WebSocketHandler):
         Create the tornado application, making it 
         callable via http://myServer.stanford.edu:<port>/bus
         '''
-
+#*****************
+#         handlers = [
+#             (r"/controller", BusTesterWebController),
+#             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
+#             ]
         handlers = [
             (r"/controller", BusTesterWebController),
-            (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
             ]
+#*****************
 
         application = tornado.web.Application(handlers , debug=False)
         

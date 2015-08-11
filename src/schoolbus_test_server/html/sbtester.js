@@ -39,7 +39,10 @@ function SbTesterControl() {
 		};
 
 		connectAttemptTime = new Date();
-		ws = new WebSocket("ws://" + originHost + originDir);
+		//*********
+		//ws = new WebSocket("ws://" + originHost + originDir);
+		ws = new WebSocket("ws://" + originHost + ':8000' + originDir);
+		//*********
 		
 		ws.onopen = function() {
 		    keepAliveTimer = window.setInterval(function() {sendKeepAlive()}, keepAliveInterval);
