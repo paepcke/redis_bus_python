@@ -43,6 +43,19 @@ textarea.inmsgs {width  : 100%;
                  border: groove 3px #0b2ba3;
                  font-color : white;
                  }
+                 
+textarea.instats {width  : 40%;
+				  height : 100px;
+				  background-color  : #1580ad;
+				  border: groove 3px #0b2ba3;
+				  font-color : white;
+				  margin : auto;
+				  margin-bottom : 10px;
+				 }
+.align-center    {display : block;
+				  margin: 1.0em auto;
+				  text-align : center; 
+				}
 
 input[type=button] { background-color: #5794ad;
 					 color: white; 

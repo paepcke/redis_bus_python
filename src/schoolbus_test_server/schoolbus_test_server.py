@@ -5,7 +5,9 @@ Created on Jul 27, 2015
 
 @author: paepcke
 '''
+import Queue
 import argparse
+import datetime
 import functools
 import hashlib
 import json
@@ -37,7 +39,12 @@ STANDARD_MSG_LENGTH = 100
 # in continuous-streaming mode: as fast
 # as possible:
 
-STREAM_INTERVAL = 0 
+STREAM_INTERVAL = 0
+
+# Max number of incoming message to keep
+# in queue for consumer to take for display
+# to user:
+MAX_SAVED_MSGS = 10000 
 
 class OnDemandPublisher(threading.Thread):
     '''
@@ -94,7 +101,11 @@ class OnDemandPublisher(threading.Thread):
     
     When asked to **listen** to some topic, messages on that
     topic are received and counted. Then the message is
-    discarded. Statistics printing is as for echoing.
+    placed into a queue where it can be picked up (self.msg_queue). 
+    If nobody attends to the queue, it fills up, and then sits there;
+    i.e. no big harm. Statistics printing is as for echoing.
+    Stats are placed on the stats_queue for consumption by anyone
+    interested (or not).
     
     Messages sent in a **stream** by sendMessageStream()
     contain their content's MD5 in the context field. This constant
@@ -121,7 +132,12 @@ class OnDemandPublisher(threading.Thread):
     MAX_IDLE_TIME = 5
     
     FIND_COMMA_PATTERN = re.compile(r'[,]+')
-    FIND_SPACE_PATTERN = re.compile(r'[ ]+')    
+    FIND_SPACE_PATTERN = re.compile(r'[ ]+')
+    
+    LOG_LEVEL_NONE  = 0
+    LOG_LEVEL_ERR   = 1
+    LOG_LEVEL_INFO  = 2
+    LOG_LEVEL_DEBUG = 3
     
     def __init__(self, serveEchos=True, 
                  listenOn=None, 
@@ -135,8 +151,8 @@ class OnDemandPublisher(threading.Thread):
             message with the same content, but different timestamp as a synchronous call. 
         :type serveEchos: bool
         :param listenOn: if this parameter provides an array of topic(s), messages on these
-            topics are received and counted, but discarded. Intermittent reception counts
-            and reception rates are printed to the console.
+            topics are received and counted, then placed on self.msg_queue. Intermittent reception counts
+            and reception rates are printed to the console, and place on self.stats_queue.
         :type listenOn: {None | [string]}
         :param streamMsgs: if True, a continuous stream of messages are sent to
             STREAM_TOPIC. The timestamp is changed each time.
@@ -151,6 +167,10 @@ class OnDemandPublisher(threading.Thread):
         :type oneShotMsg: { None | ({string | None}, {string | None})}
         '''
         threading.Thread.__init__(self)
+        
+        #self.loglevel = OnDemandPublisher.LOG_LEVEL_DEBUG
+        self.loglevel = OnDemandPublisher.LOG_LEVEL_INFO
+        #self.loglevel = OnDemandPublisher.LOG_LEVEL_NONE
         
         #***********
 #         print ('serveEchos %s' % serveEchos)
@@ -167,7 +187,7 @@ class OnDemandPublisher(threading.Thread):
         self.testBus = BusAdapter()
         self.done = False
         # No topics yet that we are to listen to, but drop msgs for:
-        self.topics_to_discard = []
+        self.topics_to_rx = []
         
         self.echo_topic = ECHO_TOPIC
         self.syntax_check_topic = SYNTAX_TOPIC
@@ -179,6 +199,14 @@ class OnDemandPublisher(threading.Thread):
         
         self.one_shot_topic = STREAM_TOPIC
         self.one_shot_content = self.standard_bus_msg
+        
+        # Queue into which incoming messages are fed
+        # for consumers to communicated to clients, such
+        # as a Web UI:
+        self.msg_queue   = Queue.Queue(MAX_SAVED_MSGS)
+        
+        # Queue to which aggregate stats will be written:  
+        self.stats_queue = Queue.Queue(MAX_SAVED_MSGS) 
 
         # Handle Cnt-C properly:
         signal.signal(signal.SIGINT, functools.partial(self.stop))
@@ -223,10 +251,10 @@ class OnDemandPublisher(threading.Thread):
             self.serve_echo = True
         
         if listenOn is not None:
-            # Array of topics to listen to (and discard): 
+            # Array of topics to listen to 
             # If we are to listen to some (additional) topic(s),
             # on which no action is taken, subscribe to it/them now:
-            self['discardTopics'] = listenOn
+            self['topicsToRx'] = listenOn
 
         if checkSyntax:
             self.check_syntax = True
@@ -235,8 +263,7 @@ class OnDemandPublisher(threading.Thread):
         
         # Number of messages received and echoed:
         self.numEchoed = 0
-        # Alternative to above when not echoing: Number of msgs just received
-        # and discarded:
+        # Alternative to above when not echoing: Number of msgs just received:
         self.numReceived = 0
         self.mostRecentRxTime = None
         self.printedResetting = False
@@ -459,8 +486,8 @@ class OnDemandPublisher(threading.Thread):
             return self.testBus.subscribedTo(self['syntaxTopic'])
 
         
-        elif item == 'discardTopics':
-            return self.topics_to_discard
+        elif item == 'topicsToRx':
+            return self.topics_to_rx
         
         else:
             raise KeyError('Key %s is not in schoolbus tester' % item)
@@ -506,13 +533,14 @@ class OnDemandPublisher(threading.Thread):
             new_val = (new_val == 'True' or new_val == True)
             self.check_syntax = new_val
             
-        elif item == 'discardTopics':
+        elif item == 'topicsToRx':
             # Topics to which we should listen, but
-            # whose msgs we are to discard. Check
+            # whose msgs we are to receive. Check
             # whether empty str or empty array, which
-            # means unsubscribe from all discardTopic:
+            # means unsubscribe from all topics-to-rx
+            # (though not from syntax checker and echo):
             if len(item) == 0:
-                for topic in self.topics_to_discard:
+                for topic in self.topics_to_rx:
                     self.testBus.unsubscribeFromTopic(topic)
                 return
             # We are given one or more topics. Tolerate
@@ -534,9 +562,9 @@ class OnDemandPublisher(threading.Thread):
 
             # Unsubscribe from all topics that are *not*
             # in the new list of topics:
-            for (topic_pos, curr_topic) in enumerate(self.topics_to_discard):
+            for (topic_pos, curr_topic) in enumerate(self.topics_to_rx):
                 if curr_topic not in new_val:
-                    self.topics_to_discard.pop(topic_pos)
+                    self.topics_to_rx.pop(topic_pos)
             
             # Subscribe to any topics in the new-list that
             # we are not already subscribed to:  
@@ -544,7 +572,7 @@ class OnDemandPublisher(threading.Thread):
                 # 
                 try:
                     # Already subscribed to it?    
-                    self.topics_to_discard.index(topic)
+                    self.topics_to_rx.index(topic)
                     # At least by our bookkeeping, yes 
                     # (else we would have had the exception.
                     # Ensure we really are:
@@ -555,7 +583,7 @@ class OnDemandPublisher(threading.Thread):
                     pass
                 # New topic:
                 self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
-                self.topics_to_discard.append(topic)
+                self.topics_to_rx.append(topic)
                 
         else:
             raise KeyError('Key %s is not in schoolbus tester' % item)
@@ -607,6 +635,19 @@ class OnDemandPublisher(threading.Thread):
         if bus_msg is None:
             bus_msg = self.standard_oneshot_msg
         self.testBus.publish(bus_msg)
+    
+    def logInfo(self, msg):
+        if self.loglevel >= OnDemandPublisher.LOG_LEVEL_INFO:
+            print(str(datetime.datetime.now()) + ' info: ' + msg)
+
+    def logErr(self, msg):
+        if self.loglevel >= OnDemandPublisher.LOG_LEVEL_ERR:
+            print(str(datetime.datetime.now()) + ' error: ' + msg)
+
+    def logDebug(self, msg):
+        if self.loglevel >= OnDemandPublisher.LOG_LEVEL_DEBUG:
+            print(str(datetime.datetime.now()) + ' debug: ' + msg)
+        
         
     def syntaxCheckReceiver(self, busMsg, context=None):
         '''
@@ -660,7 +701,7 @@ class OnDemandPublisher(threading.Thread):
         self.mostRecentRxTime = time.time()
         self.printedResetting = False
         
-        if self.serve_echo:
+        if self.serve_echo and busMsg.topicName == 'echo':
             # Create a message with the same content as the incoming
             # message, timestamp the new message, and publish it
             # on the response topic (i.e. tmp.<msgId>):
@@ -679,16 +720,28 @@ class OnDemandPublisher(threading.Thread):
                 print('Echoing: %f Msgs/sec' % msgs_per_sec)
                 self.batch_start_time = time.time()
               
-        else:
-            self.numReceived += 1
-            if self.numReceived % 1000 == 0:
-                print('Rxed %d' % self.numReceived)
-                
-            if self.numReceived % 10000 == 0:
-                # Messages per second:
-                msgs_per_sec = 10000.0 / (time.time() - self.batch_start_time)
-                print('Rx (no echo): %f Msgs/sec' % msgs_per_sec)
-                self.batch_start_time = time.time()
+
+        self.numReceived += 1
+        if self.numReceived % 1000 == 0:
+            stats_msg = 'Rxed %d' % self.numReceived
+            self.logInfo(stats_msg)
+            self.stats_queue.put_nowait(stats_msg)
+            
+        if self.numReceived % 10000 == 0:
+            # Messages per second:
+            msgs_per_sec = 10000.0 / (time.time() - self.batch_start_time)
+            stats_msg1 = 'Rx (no echo): %f Msgs/sec' % msgs_per_sec
+            self.logInfo(stats_msg1)
+            if not self.stats_queue.full():
+                self.stats_queue.put_nowait(stats_msg1)
+            self.batch_start_time = time.time()
+                        
+        topic = busMsg.topicName
+        if topic in self.topics_to_rx:
+            if not self.msg_queue.full():
+                self.msg_queue.put_nowait(str(datetime.datetime.now()) +\
+                                          "--%s: " % topic +\
+                                          busMsg.content)
                         
     def resetEchoedCounter(self):
         currTime = time.time()
@@ -722,7 +775,7 @@ class OnDemandPublisher(threading.Thread):
         self.done = True
         self.interruptEvent.set()
         try:
-            self.msg_streamer.stop(signum=None, signum=None)
+            self.msg_streamer.stop(signum=None, frame=None)
             self.msg_streamer.join(1)
         except Exception as e:
             print("Error while shutting down message streamer thread: '%s'" % `e`)
@@ -921,7 +974,7 @@ if __name__ == '__main__':
 
     listen_on = args.topic_to
     if listen_on is not None:
-        services_to_start.append("Listen for and discard messages on '%s')" % str(listen_on))
+        services_to_start.append("Listen for messages on '%s')" % str(listen_on))
 
     check_syntax = args.checkSyntax
     if check_syntax:

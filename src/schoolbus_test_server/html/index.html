@@ -63,8 +63,8 @@
 			<input type="text" id="syntaxTopic" name="syntaxTopic" placeholder="bus_syntax">
 		</p>
 		<p class="two">
-			<label for="discardTopics">Topics to listen and drop:</label>
-			<input type="text" id="discardTopics" name="discardTopics">
+			<label for="topicsToRx">Topics to listen and drop:</label>
+			<input type="text" id="topicsToRx" name="topicsToRx">
 		</p>
 		
 	</fieldset>
@@ -78,10 +78,11 @@
 		<input type="button" class="one" value="Kill Selected Server" id="stopServerBtn" name="stopServerBtn">
 	</fieldset>
 	<hr class="major" />
-	<fieldset>
+	<fieldset class="align-center">
 	        <legend>Incoming Messages</legend>
-	        <textarea class="inmsgs" readonly>
-		  </textarea>
+		<textarea class="instats" id="instats" name="instats" placeholder="In-msg stats"></textarea>
+	        <textarea class="inmsgs" id="inmsgs" name="inmsgs" placeholder="In-messages"></textarea>
+		  
 	</fieldset>
 </form>
 

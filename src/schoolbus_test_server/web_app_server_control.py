@@ -12,21 +12,20 @@ TODO:
     o Initial submit button 'push'
     o Documentation: mention what server should return
         in returned dict, incl. 
-            'error' and 'success' 
+            'error', 'success', 'inmsg', 'stats'
     
 
 '''
 
-import sys
-import os
-sys.path.append(os.path.dirname(__file__))
-
-from datetime import timedelta
 import datetime
+import functools
 import json
+import os
 import signal
+import sys
 import time
 import tornado.httpserver
+from tornado.ioloop import PeriodicCallback
 import tornado.ioloop
 import tornado.web
 from  tornado.websocket import WebSocketHandler
@@ -34,6 +33,11 @@ import uuid
 
 from redis_bus_python.bus_message import BusMessage
 from schoolbus_test_server import OnDemandPublisher
+
+
+sys.path.append(os.path.dirname(__file__))
+
+
 
 
 #****from schoolbus_test_server.tornado.websocket import WebSocketHandler
@@ -75,9 +79,19 @@ class BusTesterWebController(WebSocketHandler):
 
     # ----------------------------- Class Variables ---------------------
     
-    # UUID --> (OnDemandPubliser, kill_time):
+    # UUID --> (OnDemandPublisher, kill_time):
     test_servers = {}
-
+    
+    # Class variable to hold all instances of
+    # this class (i.e. of BusTesterWebController).
+    # Needed so that the periodic callback from the
+    # tornado ioloop to function (not method) check_for_bus_msgs()
+    # can find all  BusTesterWebController instances to
+    # call on_bus_message() on. Those methods will then check
+    # their queue that holds the in-messages captured by
+    # their OnDemandPublishers:
+     
+    bus_testers = []
     
     def __init__(self, application, request, **kwargs):
         self.title = "SchoolBus Tester"
@@ -281,6 +295,23 @@ class BusTesterWebController(WebSocketHandler):
             raise
             #*********
             return
+        
+    def on_bus_message(self):
+        '''
+        Called periodically by Tornado ioloop via function check_for_bus_msgs.  
+        Check whether any messages came in from the SchoolBus, or any statistics
+        about messages that have arrived. Assumes that self.msg_queue
+        and self.stats_queue contain respective Queue.Queue instances
+        into which OnDemandPublisher puts the received msgs and stats.
+        '''
+        try:
+            while not self.msg_queue.empty():
+                msg = self.msg_queue.get_nowait()
+                self.write_message({"inmsg" : msg})
+            while not self.stats_queue.empty():
+                self.write_message({"instat" : msg})
+        except Exception as e:
+            self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
 
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str
@@ -378,6 +409,19 @@ class BusTesterWebController(WebSocketHandler):
          
         server = OnDemandPublisher(streamMsgs=(None,None))
         
+        # Queues into which the server will place msgs that
+        # arrive on topics subscribed to through the Web UI:
+        self.msg_queue = server.msg_queue
+        self.stats_queue = server.stats_queue
+        # If this instance of BusTesterWebController isn't
+        # in the list of BusTesterWebController instances,
+        # add it now that we have msg and stats queues; that
+        # the periodic call to on_bus_message() via check_for_bus_msgs()
+        # has queues to look at:
+        if self not in BusTesterWebController.bus_testers:
+            BusTesterWebController.bus_testers.append(self)
+        
+        
         BusTesterWebController.test_servers[self.test_server_id] = \
             (server, time.time() + BusTesterWebController.DEFAULT_TIME_TO_LIVE)
             
@@ -472,6 +516,23 @@ class BusTesterWebController(WebSocketHandler):
         
         return application
 
+
+# The following is a function, not a method on BusTesterWebController:
+def check_for_bus_msgs(the_ioloop):
+    '''
+    Called periodically from tornado ioloop. Calls
+    on_bus_message on all current BusTesterWebController
+    instances. Those methods then check whether any 
+    bus messages have arrived on their queue to their
+    instance of OnDemandPublisher.
+    
+    '''
+    for bus_tester in BusTesterWebController.bus_testers:
+        #******bus_tester.on_bus_message()
+        the_ioloop.add_callback(bus_tester.on_bus_message)
+
+    ioloop.add_timeout(time.time() + 0.1, periodic_callback)
+
 signal.signal(signal.SIGINT, BusTesterWebController.shutdown)
 
 if __name__ == "__main__":
@@ -485,21 +546,21 @@ if __name__ == "__main__":
 #     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
 #     tornado.ioloop.IOLoop.instance().start()
     
-    # The following set_ping() function is a timeout
-    # callback that is installed just before ioloop.start()
-    # below. It gets the ioloop out every 2 seconds. The hope 
-    # was that this make Cnt-C work. It didn't. The timeout 
-    # still here just to allow for debugging: set a breakpoint
-    # in set_ping() so see what's going on: 
-    def set_ping(ioloop, timeout):
-        ioloop.add_timeout(timeout, lambda: set_ping(ioloop, timeout))
-
     http_server = tornado.httpserver.HTTPServer(application)
     http_server.listen(BUS_TESTER_SERVER_PORT)
+
     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
     try:
         ioloop = tornado.ioloop.IOLoop.instance()
-        set_ping(ioloop, timedelta(seconds=2))
+        periodic_callback = functools.partial(check_for_bus_msgs, ioloop)
+        
+        
+        # Install callback that checks for bus messages having
+        # arrived for all BusTesterWebController instances:
+        #****PeriodicCallback(check_for_bus_msgs, 100=).start() # msecs
+        #****ioloop.call_later(1, check_for_bus_msgs) # sec
+        #****ioloop.add_timeout(time.time() + 1.0, periodic_callback)
+        #****ioloop.add_callback(check_for_bus_msgs)
         ioloop.start()
     except Exception as e:
         print('Bombed out of tornado IO loop: %s' % `e`)

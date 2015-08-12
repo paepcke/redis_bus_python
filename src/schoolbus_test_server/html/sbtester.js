@@ -7,7 +7,11 @@ function SbTesterControl() {
 	// Websocket state 'ready for action'
 	// (Note: for other types of sockets the
 	// ready state is 1):
-	var READY_STATE = 1;
+	var WEBSOCKET_CONNECTING_STATE = 0;
+	var WEBSOCKET_READY_STATE = 1;
+	var WEBSOCKET_CLOSING_STATE = 2;
+	var WEBSOCKET_CLOSED_STATE = 3;
+	
 	var MAX_CONNECT_WAIT_TIME = 2000 // 2 seconds
 
 	var originHost  = 'localhost';
@@ -59,7 +63,19 @@ function SbTesterControl() {
 			if (keepAliveTimer !== null) {
 		    	clearInterval(keepAliveTimer);
 			}
-		    alert("The browser has detected an error while communicating with the data server: " + evt.data);
+			// We only get an event that says 'error'; make a guess
+			// at what's wrong:
+			try {
+				if (Object.prototype.toString.call(evt.currentTarget) === "[object WebSocket]" &&
+						evt.currentTarget.readyState === WEBSOCKET_CLOSED_STATE) {
+					alert("The SchoolBus test server seems to be unreachable.")
+				} else {
+					alert("The browser has detected an error while communicating with the data server: " + evt.data);
+				}
+			
+			} catch(err) {
+				alert("The browser has detected an error while communicating with the data server: " + evt.data);
+			} 
 		}
 
 	    var sendKeepAlive = function() {
@@ -92,7 +108,7 @@ function SbTesterControl() {
 					     'streamContent' : document.getElementById('streamContent').value,
 					     'streamInterval' : document.getElementById('streamInterval').value,
 					     'syntaxTopic' : document.getElementById('syntaxTopic').value,
-					     'discardTopics' : document.getElementById('discardTopics').value,
+					     'topicsToRx' : document.getElementById('topicsToRx').value,
 					     'streaming' : document.getElementById('streaming').checked ? 'True' : 'False',
 					     'echo' : document.getElementById('echo').checked ? 'True' : 'False',
 					     'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False',
@@ -101,7 +117,7 @@ function SbTesterControl() {
 	}
 	
 	this.wsReady = function() {
-		return ws.readyState == READY_STATE;
+		return ws.readyState == WEBSOCKET_READY_STATE;
 	}
 	
 	this.getWs = function() {
@@ -109,9 +125,9 @@ function SbTesterControl() {
 	}
 
 	var send = function(msg) {
-		if (ws.readyState != READY_STATE) {
+		if (ws.readyState != WEBSOCKET_READY_STATE) {
 			ws.onreadystatechange = function(msg) {
-				if (ws.readyState == READY_STATE) {
+				if (ws.readyState == WEBSOCKET_READY_STATE) {
 					ws.send(msg);
 				} else {
 					alert('Could not connect to server; timed out.');
@@ -239,10 +255,20 @@ function SbTesterControl() {
 	
 	var processServerResponse = function(respDict) {
 		/**
-		 * For each key/value pair in respDict, looks up the
-		 * UI widget ID that holds the respective parameter
-		 * value (i.e. text field, checkbox...). Modifies 
-		 * those values to match the received respDict.
+		 * The respDict from the server contains either
+		 * one of keys:
+		 *     * 'error'
+		 *     * 'success'
+		 *     * 'inmsg'
+		 *     * 'instat'
+		 *     
+		 * or the ID of an HTML widget. Respective actions are:
+		 * 
+		 *     * 'error': alert dialog with error msg contained in value.
+		 *     * 'success': do nothing.
+		 *     * 'inmsgs': write the msg in the value to the inmsgs textarea
+		 *     * 'instat': write the statistics in the value to stats textarea
+		 *     * ID of HTML widget: update value of the widget.
 		 * 
 		 * :param respDict: keys are names of server parameters.
 		 * :type respDict: {str : str}
@@ -261,6 +287,18 @@ function SbTesterControl() {
 			return
 		}
 		
+		if (serverParmNames.indexOf('inmsg') != -1) {
+			document.getElementById('inmsg').value += serverParmNames['inmsgs'];
+			return;
+		}
+		
+		if (serverParmNames.indexOf('instat') != -1) {
+			document.getElementById('instat').value += serverParmNames['stats'];
+			return;
+		}
+		
+		// Not a command: ID of a widget:
+			
 		// Grab the server_id from the return:
 		var serverId = respDict['server_id'];
 		// Give the currently selected server radio button
@@ -331,6 +369,17 @@ function SbTesterControl() {
 	}
 	
 	var getCurrLocalFields = function() {
+		/**
+		 * Go through the HTML form's widgets, and construct a dict
+		 * mapping the widget to its value. There are many
+		 * 'junk' widgets in a form that are not included. Also
+		 * not included are elements that are of local concern only,
+		 * and shouldn't go to the server. Examples are the inmsg and
+		 * instat text areas, which are about SchoolBus messages that
+		 * were passed *into* this UI from the server to be displayed
+		 * in those text areas:
+		 */
+		
 		var serverParmForm = document.forms['serverParms'];
 		var resDict = {};
 		var widget = undefined;
@@ -341,7 +390,9 @@ function SbTesterControl() {
 			// since they are only of local significance; the
 			// server won't know what to do with them:
 			if (widget.className === 'serverSelector') {
-				continue
+				continue;
+			} else if ((widget.id === 'inmsgs') || (widget.id === 'instats')) {
+				continue;
 			}
 			
 			// The form has many administrative elements
