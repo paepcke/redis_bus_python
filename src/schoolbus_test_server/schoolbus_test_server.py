@@ -539,9 +539,10 @@ class OnDemandPublisher(threading.Thread):
             # whether empty str or empty array, which
             # means unsubscribe from all topics-to-rx
             # (though not from syntax checker and echo):
-            if len(item) == 0:
+            if ((type(new_val) == str and len(new_val) == 0)) or\
+                (type(new_val) == list and len(new_val) == 1 and len(new_val[0]) == 0):
                 for topic in self.topics_to_rx:
-                    self.testBus.unsubscribeFromTopic(topic)
+                    self.unsubscribeFromTopicOrPattern(topic)
                 return
             # We are given one or more topics. Tolerate
             # comma-separated, space-separated strings, 
@@ -565,11 +566,16 @@ class OnDemandPublisher(threading.Thread):
             for (topic_pos, curr_topic) in enumerate(self.topics_to_rx):
                 if curr_topic not in new_val:
                     self.topics_to_rx.pop(topic_pos)
+                    self.unsubscribeFromTopicOrPattern(curr_topic)
             
             # Subscribe to any topics in the new-list that
             # we are not already subscribed to:  
             for topic in new_val:
-                # 
+                # Disallow use of reserved topics self.echo_topic
+                # and self.syntax_check_topic:
+                if topic in (self.echo_topic, self.syntax_check_topic):
+                    raise ValueError("Warning: '%s' and '%s' are reserved topic names." % (self.echo_topic, self.syntax_check_topic))
+                
                 try:
                     # Already subscribed to it?    
                     self.topics_to_rx.index(topic)
@@ -577,17 +583,43 @@ class OnDemandPublisher(threading.Thread):
                     # (else we would have had the exception.
                     # Ensure we really are:
                     if not self.testBus.subscribedTo(topic):
-                        self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
+                        self.subscribeTopicOrPattern(topic)
                     continue
                 except ValueError:
                     pass
                 # New topic:
-                self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
+                self.subscribeTopicOrPattern(topic)
                 self.topics_to_rx.append(topic)
                 
         else:
             raise KeyError('Key %s is not in schoolbus tester' % item)
         return new_val
+
+    def subscribeTopicOrPattern(self, topic_or_pattern):
+        # If the topic contains an asterisk, then
+        # build a regex pattern, rather than passing
+        # the topic itself:
+        try:
+            topic_or_pattern.index('*')
+            # Topic is a pattern of topics:
+            topic = re.compile(topic_or_pattern)
+        except ValueError:
+            # Not a pattern, just a regular topic name:
+            topic = topic_or_pattern
+        self.testBus.subscribeToTopic(topic, functools.partial(self.messageReceiver))
+
+    def unsubscribeFromTopicOrPattern(self, topic_or_pattern):
+        # If the topic contains an asterisk, then
+        # build a regex pattern, rather than passing
+        # the topic itself:
+        try:
+            topic_or_pattern.index('*')
+            # Topic is a pattern of topics:
+            topic = re.compile(topic_or_pattern)
+        except ValueError:
+            # Not a pattern, just a regular topic name:
+            topic = topic_or_pattern
+        self.testBus.unsubscribeFromTopic(topic)
 
     
     def createMessage(self, topic=None, msgLen=None, content=None):
@@ -737,12 +769,51 @@ class OnDemandPublisher(threading.Thread):
             self.batch_start_time = time.time()
                         
         topic = busMsg.topicName
-        if topic in self.topics_to_rx:
+        matching_subscribed_topic = self.findTopic(topic, self.topics_to_rx)
+        if matching_subscribed_topic is not None:
             if not self.msg_queue.full():
                 self.msg_queue.put_nowait(str(datetime.datetime.now()) +\
-                                          "--%s: " % topic +\
+                                          "--%s: " % matching_subscribed_topic +\
                                           busMsg.content)
-                        
+    
+    def findTopic(self, topicIdentifier, topicStrArr):
+        '''
+        Given either a string or a pattern, and an
+        array of strings that correspond to topic names
+        return return the topic name that matches the
+        topicIdentifier, or None. The strings in topicStrArr
+        may be regular expressions as used in pattern subscriptions.
+        In that case a regex match is done against the topicIdentifier.
+        
+        :param topicIdentifier: a string that names a topic. This is
+            a straight name, not a regex
+        :type topicIdentifier: string
+        :param topicsStrArr: array of strings, some of which may contain
+            the wildcard char '*', indicating that the string is a 
+            regex pattern. In such a case the topicIdentifier is
+            checked against that regex pattern.
+        :return: the string in topicsStrArr that matched, or None. 
+            The returned string may, of course be a regex string if
+            that's what caused a match.
+        :rType: {string | None}
+        '''
+         
+        for topic_in_list in topicStrArr:
+            # Is it a pattern?
+            asterisk_pos = string.find(topic_in_list, '*')
+            if asterisk_pos == -1:
+                # Simple topic name, check exact match:
+                if topicIdentifier == topic_in_list:
+                    return topic_in_list
+            else:
+                # Topic 'name' in the list is actually a pattern:
+                if re.match(topic_in_list, topicIdentifier) is not None:
+                    return topic_in_list
+                
+        # No match:
+        return None
+
+                       
     def resetEchoedCounter(self):
         currTime = time.time()
         
@@ -761,7 +832,9 @@ class OnDemandPublisher(threading.Thread):
         # Did not receive msgs within idle time:
         self.printTiming()
         if not self.printedResetting:
-            print('Resetting (echoed %d)' % self.numEchoed)
+            resetMsg = 'Resetting (echoed %d)' % self.numEchoed
+            self.logInfo(resetMsg)
+            self.stats_queue.put_nowait(resetMsg)
             self.printedResetting = True
         self.numEchoed = 0
         self.startTime = time.time()
@@ -786,12 +859,13 @@ class OnDemandPublisher(threading.Thread):
         if startTime is None:
             startTime = self.startTime
             return
-        print('Echoed %d messages' % self.numEchoed)
-        if self.numEchoed == 0:
-            print ('No messages echoed.')
-        else:
+        echoMsg = 'Echoed %d messages' % self.numEchoed
+        self.logInfo(echoMsg)
+        if self.numEchoed > 0:
             timeElapsed = float(currTime) - float(self.startTime)
-            print('Msgs per second: %d' % (timeElapsed / self.numEchoed))
+            rateMsg = 'Msgs per second: %d' % (timeElapsed / self.numEchoed)
+            self.logInfo(rateMsg)
+            self.stats_queue.put_nowait(rateMsg)
             
     def run(self):
         while not self.done:

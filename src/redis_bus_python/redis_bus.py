@@ -156,7 +156,7 @@ class BusAdapter(object):
         instance obtained via re.compile(<(raw)str>). In this case all topics
         matching the pattern are delivered.
                  
-        :param topicIdentifier: name or pattern of topic(s) to listen for.
+        :param topicIdentifier: name or regex Python Pattern instance of topic(s) to listen for.
         :type topicIdentifier: {string | Pattern}
         :param deliveryCallable: a callable that takes a BusMessage instance 
         :type deliveryCallable: callable
@@ -202,23 +202,33 @@ class BusAdapter(object):
             self.pub_sub.psubscribe(context, **topic_spec)
 
 
-    def unsubscribeFromTopic(self, topicName=None):
+    def unsubscribeFromTopic(self, topicIdentifier=None):
         '''
         Unsubscribes from topic. Stops the topic's thread,
         and removes it from bookkeeping so that the Thread object
         will be garbage collected.
         
-        Passing None for topicName unsubscribes from all topics.
+        Passing None for topicIdentifier unsubscribes from all topics.
+        Passing an re.Pattern for topicIdentifier instead of a string
+        properly unsubscribes from the topic.
         
         Calling this method for a topic that is already
         unsubscribed is a no-op.
         
-        :param topicName: name of topic to subscribe from
-        :type topicName: {string | None}
+        :param topicIdentifier: name of topic to subscribe from
+        :type topicIdentifier: {string | None | pattern}
         '''
-
-        self.pub_sub.unsubscribe(topicName)
-        if topicName is None:
+        # Is pattern identifier an regex pattern?
+        try:
+            pattern_str = topicIdentifier.pattern
+            # Unsubscribing from a pattern:
+            self.pub_sub.punsubscribe(pattern_str)
+        except AttributeError:
+            # Regular string, not a pattern:
+            self.pub_sub.unsubscribe(topicIdentifier)
+            pattern_str = topicIdentifier
+        
+        if topicIdentifier is None:
             # Kill all topic threads:
             for deliveryThread in self.topicThreads.values():
                 deliveryThread.stop()
@@ -229,13 +239,13 @@ class BusAdapter(object):
             self.topicThreads = {}
         else:
             try:
-                self.topicThreads[topicName].stop()
+                self.topicThreads[pattern_str].stop()
                 # Wait for thread to finish; timeout is a bit more
                 # than the 'stop-looking-at-queue' timeout used to check
                 # for periodic thread stoppage:
-                self.topicThreads[topicName].join()
+                self.topicThreads[topicIdentifier].join()
                 
-                del self.topicThreads[topicName]
+                del self.topicThreads[topicIdentifier]
             except KeyError:
                 pass
             

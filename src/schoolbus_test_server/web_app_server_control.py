@@ -7,20 +7,18 @@ Created on Aug 1, 2015
 
 TODO:
     o Kill server after alloted time 
-    o JS inter-msg time: in web_app_server_control
-    o Additiona servers
     o Initial submit button 'push'
     o Documentation: mention what server should return
         in returned dict, incl. 
             'error', 'success', 'inmsg', 'stats'
-    
+    o Make cnt-C work (see http://stackoverflow.com/questions/17101502/how-to-stop-the-tornado-web-server-with-ctrlc)    
+    o Prevent echo and bus_syntax from being unsubscribed directly
 
 '''
 
 import Queue
 from __builtin__ import True
 import datetime
-import functools
 import json
 import os
 import signal
@@ -116,9 +114,6 @@ class BusTesterWebController(WebSocketHandler):
         self.msg_queue = None
         self.stats_queue = None
         
-        # Protection against re-entry into tornado's write_message():
-        self.browser_write_lock = threading.Lock()
-
     def allow_draft76(self):
         '''
         Allow WebSocket connections via the old Draft-76 protocol. It has some
@@ -321,7 +316,7 @@ class BusTesterWebController(WebSocketHandler):
         except Exception as e:
             self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
 
-    def on_stats_message(self, msg):
+    def on_bus_stats(self, msg):
         '''
         Called when stats about messages to which we are subscribed
         come in. These are msgs on topics explicitly subscribed
@@ -340,8 +335,7 @@ class BusTesterWebController(WebSocketHandler):
         self.write_to_browser(json.dumps(response_dict))
 
     def write_to_browser(self, msg):
-        with self.browser_write_lock:
-            self.write_message(msg)
+        self.write_message(msg)
 
     def get_or_set_server_parm(self, parm_name, parm_val, response_dict):
         
@@ -361,7 +355,8 @@ class BusTesterWebController(WebSocketHandler):
                    self.my_server is not None and \
                    parm_name != 'oneShotContent' and \
                    parm_name != 'echoContent' and \
-                   parm_name != 'streamContent':
+                   parm_name != 'streamContent' and \
+                   parm_name != 'topicsToRx':
                 # Return current value:
                 response_dict[parm_name] =  self.my_server[parm_name]
                 return response_dict
@@ -408,8 +403,7 @@ class BusTesterWebController(WebSocketHandler):
             self.return_error(response_dict, `e`)
             # Re-raising ValueError ensures that caller
             # knows we already returned an error to the
-            # browser, and closed the connection via
-            # finish(), which happens in return_error()
+            # browser
             raise
             
         return response_dict
