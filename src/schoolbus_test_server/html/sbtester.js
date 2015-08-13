@@ -45,7 +45,7 @@ function SbTesterControl() {
 		connectAttemptTime = new Date();
 		//*********
 		//ws = new WebSocket("ws://" + originHost + originDir);
-		ws = new WebSocket("ws://" + originHost + ':8000' + originDir);
+		ws = new WebSocket("wss://" + originHost + ':8000' + originDir);
 		//*********
 		
 		ws.onopen = function() {
@@ -288,12 +288,12 @@ function SbTesterControl() {
 		}
 		
 		if (serverParmNames.indexOf('inmsg') != -1) {
-			document.getElementById('inmsg').value += serverParmNames['inmsgs'];
+			document.getElementById('inmsgs').value += respDict['inmsg'];
 			return;
 		}
 		
 		if (serverParmNames.indexOf('instat') != -1) {
-			document.getElementById('instat').value += serverParmNames['stats'];
+			document.getElementById('instats').value += respDict['instat'];
 			return;
 		}
 		
@@ -483,6 +483,16 @@ window.onload = function() {
 	document.getElementById('stopServerBtn').addEventListener('click', sbTesterControl.killServer);
 	document.getElementById('startServerBtn').disabled = true;
 	document.getElementById('stopServerBtn').disabled = true;
+	
+	// Make text areas auto scroll to bottom as text get added.
+	document.getElementById("inmsgs").scrollTop = document.getElementById("inmsgs").scrollHeight;
+	document.getElementById("instats").scrollTop = document.getElementById("instats").scrollHeight;
+	
+	// Bind clear-inmsgs and stats button:
+	document.getElementById("inmsgsClear").addEventListener('click', function() {
+		document.getElementById("inmsgs").value = '';
+		document.getElementById("instats").value = '';
+		});
 	
 	// Have the form fields filled in with current server parameter values: 
 	sbTesterControl.submit();

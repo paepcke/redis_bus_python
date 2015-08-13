@@ -16,6 +16,7 @@ setup(
 			'configparser>=3.3.0r2', 
 			'argparse>=1.2.1', 
 			'unidecode>=0.04.14', 
+			'tornado>=4.2.1',
 			] + test_requirements,
 
     # Unit tests; they are initiated via 'python setup.py test'

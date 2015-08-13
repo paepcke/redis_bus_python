@@ -17,15 +17,17 @@ TODO:
 
 '''
 
+import Queue
+from __builtin__ import True
 import datetime
 import functools
 import json
 import os
 import signal
 import sys
+import threading
 import time
 import tornado.httpserver
-from tornado.ioloop import PeriodicCallback
 import tornado.ioloop
 import tornado.web
 from  tornado.websocket import WebSocketHandler
@@ -110,6 +112,12 @@ class BusTesterWebController(WebSocketHandler):
         # with which to retrieve the already existing OnDemandPublisher:
         
         self.test_server_id = None
+        
+        self.msg_queue = None
+        self.stats_queue = None
+        
+        # Protection against re-entry into tornado's write_message():
+        self.browser_write_lock = threading.Lock()
 
     def allow_draft76(self):
         '''
@@ -118,6 +126,9 @@ class BusTesterWebController(WebSocketHandler):
         don't implement the new protocols yet. Overriding this method, and
         returning True will allow those connections.
         '''
+        return True
+
+    def check_origin(self, origin):
         return True
 
     def open(self): #@ReservedAssignment
@@ -173,7 +184,7 @@ class BusTesterWebController(WebSocketHandler):
         
         if msg_dict.get('killServer', None) is not None:
             self.kill_a_server(msg_dict['killServer'])
-            self.write_message(json.dumps({'success' : 'OK'}))
+            self.write_to_browser(json.dumps({'success' : 'OK'}))
             return 
         
         if self.test_server_id is None or len(self.test_server_id) == 0:
@@ -214,7 +225,7 @@ class BusTesterWebController(WebSocketHandler):
         #******** Exploring problem of hanging sometimes
         #         when (un)subscribing while publishing:
 #         response_dict['server_id'] = self.test_server_id
-#         self.write_message(json.dumps(response_dict))
+#         self.write_to_browser(json.dumps(response_dict))
 #         print ('got one; stream')
 #         self.my_server.streaming = True
 #         time.sleep(2)
@@ -256,7 +267,7 @@ class BusTesterWebController(WebSocketHandler):
                 one_shot_msg = BusMessage(topicName=self.my_server['oneShotTopic'], content=self.my_server['oneShotContent'])
                 self.my_server.testBus.publish(one_shot_msg)
                 response_dict['success'] = 'OK'
-                self.write_message(json.dumps(response_dict))
+                self.write_to_browser(json.dumps(response_dict))
                 return
             
             # Go through each server parm in the request dict,
@@ -278,7 +289,7 @@ class BusTesterWebController(WebSocketHandler):
             # Send a dict with keys being the HTML parameter
             # names, and values being the current server
             # parameter values:
-            self.write_message(json.dumps(response_dict))
+            self.write_to_browser(json.dumps(response_dict))
             
             #******
             # If a real HTML page were to be sent,
@@ -296,26 +307,41 @@ class BusTesterWebController(WebSocketHandler):
             #*********
             return
         
-    def on_bus_message(self):
+    def on_bus_message(self, msg):
         '''
-        Called periodically by Tornado ioloop via function check_for_bus_msgs.  
-        Check whether any messages came in from the SchoolBus, or any statistics
-        about messages that have arrived. Assumes that self.msg_queue
-        and self.stats_queue contain respective Queue.Queue instances
-        into which OnDemandPublisher puts the received msgs and stats.
+        Called when a message to which we are subscribed
+        comes in. These are msgs on topics explicitly subscribed
+        to via the Web UI.
+        
+        :param msg: message to write to browser.
+        :type msgs: string
         '''
         try:
-            while not self.msg_queue.empty():
-                msg = self.msg_queue.get_nowait()
-                self.write_message({"inmsg" : msg})
-            while not self.stats_queue.empty():
-                self.write_message({"instat" : msg})
+            self.write_to_browser({"inmsg" : msg + '\r\n'})
+        except Exception as e:
+            self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
+
+    def on_stats_message(self, msg):
+        '''
+        Called when stats about messages to which we are subscribed
+        come in. These are msgs on topics explicitly subscribed
+        to via the Web UI.
+        
+        :param msg: stats message to write to browser.
+        :type msgs: string
+        '''
+        try:
+            self.write_to_browser({"instat" : msg + '\r\n'})
         except Exception as e:
             self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
 
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str
-        self.write_message(json.dumps(response_dict))
+        self.write_to_browser(json.dumps(response_dict))
+
+    def write_to_browser(self, msg):
+        with self.browser_write_lock:
+            self.write_message(msg)
 
     def get_or_set_server_parm(self, parm_name, parm_val, response_dict):
         
@@ -413,6 +439,11 @@ class BusTesterWebController(WebSocketHandler):
         # arrive on topics subscribed to through the Web UI:
         self.msg_queue = server.msg_queue
         self.stats_queue = server.stats_queue
+        
+        # Start a thread that hangs on msg and stats queues
+        # of this new OnDemandPublisher:
+        BusInMsgChecker(self, self.msg_queue, self.stats_queue).start()
+        
         # If this instance of BusTesterWebController isn't
         # in the list of BusTesterWebController instances,
         # add it now that we have msg and stats queues; that
@@ -496,6 +527,41 @@ class BusTesterWebController(WebSocketHandler):
             server.join(2)
             sys.exit()
 
+    @classmethod
+    def getCertAndKey(self):
+        '''
+        Return a 2-tuple with full paths, respectively to
+        the SSL certificate, and private key.
+        To find the SSL certificate location, we assume
+        that it is stored in dir '.ssl' in the current
+        user's home dir.
+        We assume the cert file either ends in .cer, or
+        in .crt, and that the key file ends in .key.
+        The first matching files in the .ssl directory
+        are grabbed.
+
+        @return: two-tuple with full path to SSL certificate, and key files.
+        @rtype: (str,str)
+        @raise ValueError: if either of the files are not found.
+
+        '''
+        homeDir = os.path.expanduser("~")
+        sslDir = '%s/.ssl/' % homeDir
+        try:
+            certFileName = next(fileName for fileName in os.listdir(sslDir)
+	                               if fileName.endswith('.cer') or fileName.endswith('.crt'))
+        except StopIteration:
+            raise(ValueError("Could not find ssl certificate file in %s" % sslDir))
+
+        try:
+            privateKeyFileName = next(fileName for fileName in os.listdir(sslDir)
+	                                     if fileName.endswith('.key'))
+        except StopIteration:
+            raise(ValueError("Could not find ssl private key file in %s" % sslDir))
+        return (os.path.join(sslDir, certFileName),
+                os.path.join(sslDir, privateKeyFileName))
+
+
     @classmethod  
     def makeApp(self):
         '''
@@ -516,22 +582,40 @@ class BusTesterWebController(WebSocketHandler):
         
         return application
 
-
-# The following is a function, not a method on BusTesterWebController:
-def check_for_bus_msgs(the_ioloop):
+class BusInMsgChecker(threading.Thread):
     '''
-    Called periodically from tornado ioloop. Calls
-    on_bus_message on all current BusTesterWebController
-    instances. Those methods then check whether any 
-    bus messages have arrived on their queue to their
-    instance of OnDemandPublisher.
-    
+    Thread that hangs on one OnDemandPublisher instance's
+    incoming messages/stats queues. When an in message arrives,
+    this thread instance calls on_bus_message() on the 
+    BusTesterWebController instance that started this thread
+    instance.
     '''
-    for bus_tester in BusTesterWebController.bus_testers:
-        #******bus_tester.on_bus_message()
-        the_ioloop.add_callback(bus_tester.on_bus_message)
-
-    ioloop.add_timeout(time.time() + 0.1, periodic_callback)
+    def __init__(self, bus_tester, in_msg_queue, in_stats_queue):
+        super(BusInMsgChecker, self).__init__()
+        
+        self.bus_tester = bus_tester
+        self.in_msg_queue = in_msg_queue
+        self.in_stats_queue = in_stats_queue
+        self.done = False
+        # Die when parent dies:
+        self.daemon = True
+        
+    def stop(self):
+        self.done = True
+        
+    def run(self):
+        while not self.done:
+            try:
+                msg = self.in_msg_queue.get(1.0) # second
+                #********self.bus_tester.on_bus_message(msg)
+                ioloop.add_callback(self.bus_tester.on_bus_message, msg)
+            except Queue.Empty:
+                if self.done:
+                    return
+            while not self.in_stats_queue.empty():
+                #******self.bus_tester.on_bus_stats(self.in_stats_queue.get())
+                stats = self.in_stats_queue.get()
+                ioloop.add_callback(self.bus_tester.on_bus_stats, stats)
 
 signal.signal(signal.SIGINT, BusTesterWebController.shutdown)
 
@@ -546,21 +630,22 @@ if __name__ == "__main__":
 #     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
 #     tornado.ioloop.IOLoop.instance().start()
     
-    http_server = tornado.httpserver.HTTPServer(application)
-    http_server.listen(BUS_TESTER_SERVER_PORT)
+    (certFile,keyFile) = BusTesterWebController.getCertAndKey()
+    sslArgsDict = {'certfile' : certFile,
+                   'keyfile'  : keyFile}
+
+    http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
+
+    application.listen(8000, ssl_options=sslArgsDict)
+    
+    
+    # For non-ssl:
+    # ****http_server = tornado.httpserver.HTTPServer(application)
+    # ****http_server.listen(BUS_TESTER_SERVER_PORT)
 
     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
     try:
         ioloop = tornado.ioloop.IOLoop.instance()
-        periodic_callback = functools.partial(check_for_bus_msgs, ioloop)
-        
-        
-        # Install callback that checks for bus messages having
-        # arrived for all BusTesterWebController instances:
-        #****PeriodicCallback(check_for_bus_msgs, 100=).start() # msecs
-        #****ioloop.call_later(1, check_for_bus_msgs) # sec
-        #****ioloop.add_timeout(time.time() + 1.0, periodic_callback)
-        #****ioloop.add_callback(check_for_bus_msgs)
         ioloop.start()
     except Exception as e:
         print('Bombed out of tornado IO loop: %s' % `e`)
