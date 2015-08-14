@@ -303,6 +303,7 @@ class OnDemandPublisher(threading.Thread):
         else:
             # Create a standard message with default topic/content:
             self.standard_stream_msg = self.createMessage()
+            self.msg_streamer = None
 
     @property
     def running(self):
@@ -848,6 +849,7 @@ class OnDemandPublisher(threading.Thread):
         self.done = True
         self.interruptEvent.set()
         try:
+            self.logInfo('Shutting down streamer thread...')
             self.msg_streamer.stop(signum=None, frame=None)
             self.msg_streamer.join(1)
         except Exception as e:

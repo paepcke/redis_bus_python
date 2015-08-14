@@ -15,7 +15,7 @@ function SbTesterControl() {
 	var MAX_CONNECT_WAIT_TIME = 2000 // 2 seconds
 
 	var originHost  = 'localhost';
-	var originPort  = 8000;
+	var controllerWebsocketPort  = 8001;
 	// URL part after the domain and port.
 	// Server expects websocket connections there:
 	var originDir   = '/controller';
@@ -37,15 +37,22 @@ function SbTesterControl() {
 	this.construct = function() {
 		// Note URL of the host that pulled this JS file
 		// to its browser:
-		originHost
 		if (window.location.host.length != 0) {
 			originHost = window.location.host;
+			originHostAndPort = originHost.split(':');
+			originHost = originHostAndPort[0];
+			if (originHostAndPort.length > 1) {
+				originPort = originHostAndPort[1];
+			} else {
+				originPort = undefined;
+			}
 		};
+		
 
 		connectAttemptTime = new Date();
 		//*********
-		//ws = new WebSocket("ws://" + originHost + originDir);
-		ws = new WebSocket("wss://" + originHost + ':8000' + originDir);
+		//ws = new WebSocket("wss://" + originHost + originDir);
+		ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
 		//*********
 		
 		ws.onopen = function() {

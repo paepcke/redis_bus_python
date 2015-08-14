@@ -16,14 +16,12 @@ TODO:
 
 '''
 
-import Queue
 from __builtin__ import True
 import datetime
 import json
 import os
 import signal
 import sys
-import threading
 import time
 import tornado.httpserver
 import tornado.ioloop
@@ -43,7 +41,7 @@ sys.path.append(os.path.dirname(__file__))
 
 #****from schoolbus_test_server.tornado.websocket import WebSocketHandler
 #**********
-BUS_TESTER_SERVER_PORT = 8000
+BUS_TESTER_SERVER_PORT = 8001
 #BUS_TESTER_SERVER_PORT = 80
 #**********
 
@@ -118,6 +116,9 @@ class BusTesterWebController(WebSocketHandler):
         
         self.msg_queue = None
         self.stats_queue = None
+        self.periodic_callback = None
+        
+        self._write_to_browser_callback = functools.partial(self._write_to_browser)
         
     def allow_draft76(self):
         '''
@@ -141,12 +142,16 @@ class BusTesterWebController(WebSocketHandler):
      
     def on_close(self):
         self.logDebug('Websocket was closed; shutting down school test server...')
-        try:
-            (server, kill_time) = BusTesterWebController.test_servers[self.test_server_id] #@UnusedVariable
-            server.stop()
-            server.join(2)
-        except Exception as e:
-            print('Could not shut school test server down: %s' % `e`)
+        # Stop the checks for incoming messages:
+        if self.periodic_callback is not None:
+            self.periodic_callback.stop()
+        if self.test_server_id is not None:
+            try:
+                (server, kill_time) = BusTesterWebController.test_servers[self.test_server_id] #@UnusedVariable
+                server.stop()
+                server.join(2)
+            except Exception as e:
+                print('Could not shut school test server down: %s' % `e`)
             
         
     def on_message (self, msg):
@@ -330,12 +335,14 @@ class BusTesterWebController(WebSocketHandler):
                     self.write_to_browser({"inmsg" : msg + '\r\n'})
                 except Exception as e:
                     self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)
+                    return
         else:
             try:
                 self.write_to_browser({"inmsg" : msg + '\r\n'})
             except Exception as e:
                 self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)
-        
+                return
+            
         # Check for new bus statistics to forward to browser:        
         self.on_bus_stats()              
 
@@ -358,18 +365,42 @@ class BusTesterWebController(WebSocketHandler):
                     self.write_to_browser({"instat" : msg + '\r\n'})
                 except Exception as e:
                     self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
-
+                    return
         else:
             try:
                 self.write_to_browser({"instat" : msg + '\r\n'})
             except Exception as e:
                 self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
+                return
             
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str
         self.write_to_browser(json.dumps(response_dict))
 
     def write_to_browser(self, msg):
+        '''
+        Send a message to the browser on the other end
+        of the websocket. You may call this method from
+        any thread. It schedules the actual write to happen
+        during the next ioloop iteration, which is a 
+        threadsafe procedure. Always use this method to 
+        write to the websocket, don't use self.write_message 
+        anywhere.
+        
+        :param msg: text to send
+        :type msg: string
+        '''
+        tornado.ioloop.IOLoop.instance().add_callback(self._write_to_browser_callback, msg)
+        
+    def _write_to_browser(self, msg):
+        '''
+        Write msg to the browser that is connected through
+        the websocket. Don't call this method directly. It
+        is a callback for the tornado ioloop.
+        
+        :param msg: text to send
+        :type msg: str
+        '''
         self.write_message(msg)
 
     def get_or_set_server_parm(self, parm_name, parm_val, response_dict):
@@ -473,10 +504,10 @@ class BusTesterWebController(WebSocketHandler):
         # queues for msgs/stats to forward to the browser. The
         # instance() method enforces a singleton ioloop instance:
         
-        periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.on_bus_message),
-                                                                              BusTesterWebController.PERIODIC_IN_MSG_CHECK
-                                                                              )
-        periodic_callback.start()
+        self.periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.on_bus_message),
+                                                                 BusTesterWebController.PERIODIC_IN_MSG_CHECK
+                                                                 )
+        self.periodic_callback.start()
         
         # If this instance of BusTesterWebController isn't
         # in the list of BusTesterWebController instances,
@@ -552,16 +583,6 @@ class BusTesterWebController(WebSocketHandler):
             print(str(datetime.datetime.now()) + ' debug: ' + msg)
 
     @classmethod
-    def shutdown(cls, signum, frame):
-        for server in BusTesterWebController.test_servers:
-            #*********
-            print("calling stop on %s" % str(server))
-            #*********
-            server.stop()
-            server.join(2)
-            sys.exit()
-
-    @classmethod
     def getCertAndKey(self):
         '''
         Return a 2-tuple with full paths, respectively to
@@ -608,15 +629,52 @@ class BusTesterWebController(WebSocketHandler):
 #             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
 #             ]
         handlers = [
-            (r"/controller", BusTesterWebController),
-            ]
+             (r"/controller", BusTesterWebController),
+             ]
 #*****************
 
         application = tornado.web.Application(handlers , debug=False)
         
         return application
 
-signal.signal(signal.SIGINT, BusTesterWebController.shutdown)
+
+# Note: function not method:
+def sig_handler(sig, frame):
+    # Schedule call to shutdown, so that all ioloop
+    # related calls are from main thread: 
+    tornado.ioloop.IOLoop.instance().add_callback(shutdown) 
+
+# Note: function not method:
+def shutdown():
+    
+    # Time for ioloop to shut everything down:
+    MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = 3
+
+    for server in BusTesterWebController.test_servers:
+        print("Stopping %s" % str(server))
+        server.stop()
+        server.join(2)
+
+    global http_server
+    print("Stopping HTTP server...")
+    http_server.stop()
+    
+    print('Shutdown in %s seconds ...' % MAX_WAIT_SECONDS_BEFORE_SHUTDOWN)
+    io_loop = tornado.ioloop.IOLoop.instance()
+
+    deadline = time.time() + MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
+
+    def stop_loop():
+        now = time.time()
+        if now < deadline and (io_loop._callbacks or io_loop._timeouts):
+            io_loop.add_timeout(now + 1, stop_loop)
+        else:
+            io_loop.stop()
+            print('Shutdown complete.')
+    stop_loop()    
+    
+
+signal.signal(signal.SIGINT, sig_handler)
 
 if __name__ == "__main__":
 
@@ -635,7 +693,7 @@ if __name__ == "__main__":
 
     http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
 
-    application.listen(8000, ssl_options=sslArgsDict)
+    application.listen(BUS_TESTER_SERVER_PORT, ssl_options=sslArgsDict)
     
     
     # For non-ssl:
@@ -648,4 +706,6 @@ if __name__ == "__main__":
         ioloop.start()
     except Exception as e:
         print('Bombed out of tornado IO loop: %s' % `e`)
+    
+    print('School bus test server has shut down.')
     
