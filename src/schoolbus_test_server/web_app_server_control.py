@@ -33,6 +33,7 @@ import uuid
 
 from redis_bus_python.bus_message import BusMessage
 from schoolbus_test_server import OnDemandPublisher
+import functools
 
 
 sys.path.append(os.path.dirname(__file__))
@@ -71,6 +72,10 @@ class BusTesterWebController(WebSocketHandler):
     # abandoned:
     
     DEFAULT_TIME_TO_LIVE = 2.0 * 3600.0 # hrs * sec/hr
+    
+    # Periodic check for incoming messages to forward to browser:
+    
+    PERIODIC_IN_MSG_CHECK = 100 # milliseconds
     
     LOG_LEVEL_NONE  = 0
     LOG_LEVEL_ERR   = 1
@@ -302,34 +307,64 @@ class BusTesterWebController(WebSocketHandler):
             #*********
             return
         
-    def on_bus_message(self, msg):
+    def on_bus_message(self, msg=None):
         '''
         Called when a message to which we are subscribed
         comes in. These are msgs on topics explicitly subscribed
-        to via the Web UI.
+        to via the Web UI. If msg is None, check self.msg_queue
+        for newly arrived msgs from the bus:
         
         :param msg: message to write to browser.
-        :type msgs: string
+        :type msgs: {string | None}
         '''
-        try:
-            self.write_to_browser({"inmsg" : msg + '\r\n'})
-        except Exception as e:
-            self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
+        
+        if msg is None:
+            # If message/stats queues have not been initialized
+            # yet, just return:
+            if self.msg_queue is None:
+                return
+            # We check the msg queue for messages:
+            while not self.msg_queue.empty():
+                msg = self.msg_queue.get_nowait()
+                try:
+                    self.write_to_browser({"inmsg" : msg + '\r\n'})
+                except Exception as e:
+                    self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)
+        else:
+            try:
+                self.write_to_browser({"inmsg" : msg + '\r\n'})
+            except Exception as e:
+                self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)
+        
+        # Check for new bus statistics to forward to browser:        
+        self.on_bus_stats()              
 
-    def on_bus_stats(self, msg):
+    def on_bus_stats(self, msg=None):
         '''
         Called when stats about messages to which we are subscribed
         come in. These are msgs on topics explicitly subscribed
-        to via the Web UI.
+        to via the Web UI. If msg is None, check self.stats_queue
+        for newly arrived msgs from the bus:
         
         :param msg: stats message to write to browser.
-        :type msgs: string
+        :type msgs: {string | None}
         '''
-        try:
-            self.write_to_browser({"instat" : msg + '\r\n'})
-        except Exception as e:
-            self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
+        
+        if msg is None:
+            # We check the stats queue for messages:
+            while not self.stats_queue.empty():
+                msg = self.stats_queue.get_nowait()
+                try:
+                    self.write_to_browser({"instat" : msg + '\r\n'})
+                except Exception as e:
+                    self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
 
+        else:
+            try:
+                self.write_to_browser({"instat" : msg + '\r\n'})
+            except Exception as e:
+                self.logErr("Error during read of msg or stats queue from OnDemandServer: '%s'" % `e`)              
+            
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str
         self.write_to_browser(json.dumps(response_dict))
@@ -434,9 +469,14 @@ class BusTesterWebController(WebSocketHandler):
         self.msg_queue = server.msg_queue
         self.stats_queue = server.stats_queue
         
-        # Start a thread that hangs on msg and stats queues
-        # of this new OnDemandPublisher:
-        BusInMsgChecker(self, self.msg_queue, self.stats_queue).start()
+        # Create a periodic callback that checks the in-msg and in-stats
+        # queues for msgs/stats to forward to the browser. The
+        # instance() method enforces a singleton ioloop instance:
+        
+        periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.on_bus_message),
+                                                                              BusTesterWebController.PERIODIC_IN_MSG_CHECK
+                                                                              )
+        periodic_callback.start()
         
         # If this instance of BusTesterWebController isn't
         # in the list of BusTesterWebController instances,
@@ -575,41 +615,6 @@ class BusTesterWebController(WebSocketHandler):
         application = tornado.web.Application(handlers , debug=False)
         
         return application
-
-class BusInMsgChecker(threading.Thread):
-    '''
-    Thread that hangs on one OnDemandPublisher instance's
-    incoming messages/stats queues. When an in message arrives,
-    this thread instance calls on_bus_message() on the 
-    BusTesterWebController instance that started this thread
-    instance.
-    '''
-    def __init__(self, bus_tester, in_msg_queue, in_stats_queue):
-        super(BusInMsgChecker, self).__init__()
-        
-        self.bus_tester = bus_tester
-        self.in_msg_queue = in_msg_queue
-        self.in_stats_queue = in_stats_queue
-        self.done = False
-        # Die when parent dies:
-        self.daemon = True
-        
-    def stop(self):
-        self.done = True
-        
-    def run(self):
-        while not self.done:
-            try:
-                msg = self.in_msg_queue.get(1.0) # second
-                #********self.bus_tester.on_bus_message(msg)
-                ioloop.add_callback(self.bus_tester.on_bus_message, msg)
-            except Queue.Empty:
-                if self.done:
-                    return
-            while not self.in_stats_queue.empty():
-                #******self.bus_tester.on_bus_stats(self.in_stats_queue.get())
-                stats = self.in_stats_queue.get()
-                ioloop.add_callback(self.bus_tester.on_bus_stats, stats)
 
 signal.signal(signal.SIGINT, BusTesterWebController.shutdown)
 
