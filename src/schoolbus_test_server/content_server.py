@@ -6,11 +6,13 @@ Created on Aug 14, 2015
 @author: paepcke
 '''
 import os
+import socket
 import tornado.httpserver
 import tornado.ioloop
 import tornado.web
 
-BUS_TESTER_SERVER_PORT = 8001
+
+BUS_TESTER_WEBSOCKET_PORT = 8000
 
 class UiContentServer(tornado.web.RequestHandler):
     '''
@@ -80,15 +82,24 @@ if __name__ == '__main__':
     sslArgsDict = {'certfile' : certFile,
                    'keyfile'  : keyFile}
 
+    # For ssl:
+    ssl_used = True
     http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
-
     application.listen(8000, ssl_options=sslArgsDict)
         
     # For non-ssl:
-    # ****http_server = tornado.httpserver.HTTPServer(application)
-    # ****http_server.listen(BUS_TESTER_SERVER_PORT)
+    #ssl_used = False
+    #http_server = tornado.httpserver.HTTPServer(application)
+    #http_server.listen(BUS_TESTER_WEBSOCKET_PORT)
 
-    print('Starting SchoolBus Web UI server on port %d' % BUS_TESTER_SERVER_PORT)
+    if ssl_used:
+        protocol_spec = 'https'
+    else:
+        protocol_spec = 'http'
+    start_msg = 'Starting SchoolBus Web UI server on %s://%s:%d/bus/' % \
+        (protocol_spec, socket.gethostname(), BUS_TESTER_WEBSOCKET_PORT)
+
+    print('Starting SchoolBus Web UI server on port %s' % start_msg)
     try:
         ioloop = tornado.ioloop.IOLoop.instance()
         ioloop.start()

@@ -24,13 +24,14 @@ import functools
 import json
 import os
 import signal
+import socket
 import sys
 import threading
 import time
 import tornado.httpserver
 import tornado.ioloop
 import tornado.web
-from  tornado.websocket import WebSocketHandler
+from tornado.websocket import WebSocketHandler
 import uuid
 
 from redis_bus_python.bus_message import BusMessage
@@ -42,11 +43,7 @@ sys.path.append(os.path.dirname(__file__))
 
 
 
-#****from schoolbus_test_server.tornado.websocket import WebSocketHandler
-#**********
-BUS_TESTER_SERVER_PORT = 8001
-#BUS_TESTER_SERVER_PORT = 80
-#**********
+BUS_TESTER_WEBSOCKET_PORT = 8001
 
 DO_BLOCK = True
 
@@ -630,25 +627,36 @@ if __name__ == "__main__":
     
     # Starting multiple Python processes on multiple cores:
 #     server = tornado.httpserver.HTTPServer(application)
-#     server.bind(BUS_TESTER_SERVER_PORT)
+#     server.bind(BUS_TESTER_WEBSOCKET_PORT)
 #     server.start(0)  # Forks multiple sub-processes
-#     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
+#     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_WEBSOCKET_PORT)
 #     tornado.ioloop.IOLoop.instance().start()
     
     (certFile,keyFile) = BusTesterWebController.getCertAndKey()
     sslArgsDict = {'certfile' : certFile,
                    'keyfile'  : keyFile}
 
+    # For SSL:
+    ssl_used = True
     http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
-
-    application.listen(BUS_TESTER_SERVER_PORT, ssl_options=sslArgsDict)
+    application.listen(BUS_TESTER_WEBSOCKET_PORT, ssl_options=sslArgsDict)
     
     
     # For non-ssl:
-    # ****http_server = tornado.httpserver.HTTPServer(application)
-    # ****http_server.listen(BUS_TESTER_SERVER_PORT)
+    #ssl_used = False
+    #http_server = tornado.httpserver.HTTPServer(application)
+    #http_server.listen(BUS_TESTER_WEBSOCKET_PORT)
 
-    print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_SERVER_PORT)
+    if ssl_used:
+        protocol_spec = 'wss'
+    else:
+        protocol_spec = 'ws'
+
+    start_msg = 'Starting SchoolBus Web UI websocket server on %s://%s:%d/bus/' % \
+        (protocol_spec, socket.gethostname(), BUS_TESTER_WEBSOCKET_PORT)
+
+    print(start_msg)
+    
     try:
         ioloop = tornado.ioloop.IOLoop.instance()
         ioloop.start()

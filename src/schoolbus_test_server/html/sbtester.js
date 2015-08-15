@@ -51,7 +51,7 @@ function SbTesterControl() {
 
 		connectAttemptTime = new Date();
 		//*********
-		//ws = new WebSocket("wss://" + originHost + originDir);
+		//ws = new WebSocket("ws://" + originHost + ':' + controllerWebsocketPort + originDir);
 		ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
 		//*********
 		
