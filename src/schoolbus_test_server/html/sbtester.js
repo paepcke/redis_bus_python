@@ -146,69 +146,6 @@ function SbTesterControl() {
 		}
 	}
 
-	this.startServer = function() {
-		// Simply add a radio button to the bank of
-		// available-servers bank:
-		var serverRadios = document.getElementsByName('serverRadios')
-		var radioInput = document.createElement('input');
-		radioInput.setAttribute('type', 'radio');
-		radioInput.setAttribute('name', 'serverRadios');
-		radioInput.setAttribute('class', 'serverSelector');
-		// Indicate that we don't yet have a server ID
-		// for this radio button. The next request will
-		// update the id:
-		radioInput.id = '';
-		radioInput.checked = true;
-		radioInput.addEventListener('change', switchServer);		
-		// Add the new radio button just before the
-		// 'Additional Server' button:
-		var additionalServerBtn = document.getElementById('startServerBtn');
-		document.getElementById('servers').insertBefore(radioInput, additionalServerBtn);
-		
-		// If more than one server exists now, enable the
-		// kill server button:
-		
-		if (document.getElementsByName('serverRadios').length > 1) {
-			document.getElementById('stopServerBtn').disabled = false;
-		}
-		
-		// Trigger a request to the server with all-empty parameter fields:
-		sendReq(getEmptyServerParmForm());
-	}
-
-	this.killServer = function() {
-		
-		// Can't kill last server:
-		if (document.getElementsByName('serverRadios').length === 1) {
-			alert("Can't kill last server.");
-			return;
-		}
-		
-		// Get server ID associated with currently checked
-		// server selection radio button:
-		var checkedServerId = getCheckedServerId();
-		
-		// Get checked radio widget:
-		var chkBoxToRemove  = getCheckedServerRadioBtn();
-		
-		// Via the radio button's parent, remove the radio button:
-		chkBoxToRemove.parentNode.removeChild(chkBoxToRemove);
-		
-		// Disable kill server button if only one checkbox left:
-		if (document.getElementsByName('serverRadios').length === 1) {
-			document.getElementById('stopServerBtn').disabled = true;
-		}
-		
-		// Tell server that we no longer need the server
-		// with the given server ID:
-		sendReq({'killServer' : checkedServerId});
-		
-		// Now select the first radio button (without this
-		// no button will be selected:
-		document.getElementsByName('serverRadios')[0].checked = true;
-		
-	}
-	
 	this.sendOneShot = function() {
 		// Ask server to send a one-shot bus message:
 		sendReq({'oneShot' : 'True'})
@@ -230,11 +167,6 @@ function SbTesterControl() {
 		// Names of all the server parameters to *change*:
 		var reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
 		
-		/* ********
-		// Make a copy of the just-ask-for-all-values
-		// request dict:
-		var newReqDict = getEmptyServerParmForm();
-		***************/
 		// Get a dict of all current field values:
 		var currReqDict = getCurrLocalFields();
 		
@@ -246,18 +178,7 @@ function SbTesterControl() {
 			currReqDict[reqKeysToChange[i]] = parmsDict[reqKeysToChange[i]];
 		}
 
-		// Add the server UUID so that the test server can
-		// find the already existing SchoolBus server:
-		currReqDict['server_id'] = getCheckedServerId();
-		
 	    send( JSON.stringify( currReqDict ) );
-	}
-	
-
-	var switchServer = function() {
-		// Called when a server radio button goes checked:
-		// Get ID of checked server radio button:
-		sendReq(getEmptyServerParmForm());
 	}
 	
 	var processServerResponse = function(respDict) {
@@ -421,30 +342,6 @@ function SbTesterControl() {
 		return resDict;
 	}
 	
-	var getCheckedServerId = function() {
-		/**
-		 * Returns the UUID of the test server whose
-		 * corresponding radio button is checked.
-		 */
-		
-		var serverRadios = document.getElementsByName('serverRadios')
-		for (var i=0; i<serverRadios.length; i++) {
-			if (serverRadios[i].checked == true) {
-				return serverRadios[i].id
-			}
-		}
-	}
-	
-	var getCheckedServerRadioBtn = function() {
-		var serverRadios = document.getElementsByName('serverRadios')
-		for (var i=0; i<serverRadios.length; i++) {
-			if (serverRadios[i].checked == true) {
-				return serverRadios[i]
-			}
-		}
-		
-	}
-	
 	var isArray = function(obj) {
 		return Object.prototype.toString.call( obj ) === '[object Array]';
 	}
@@ -484,12 +381,6 @@ window.onload = function() {
 	document.getElementById('chkSyntax').addEventListener('change', sbTesterControl.chkSyntaxOnOff);
 	
 	document.getElementById('submitBtn').addEventListener('click', sbTesterControl.submit);
-	
-	document.getElementById('startServerBtn').addEventListener('click', sbTesterControl.startServer);
-	document.getElementsByName('serverRadios')[0].addEventListener('change', sbTesterControl.switchServer)
-	document.getElementById('stopServerBtn').addEventListener('click', sbTesterControl.killServer);
-	document.getElementById('startServerBtn').disabled = true;
-	document.getElementById('stopServerBtn').disabled = true;
 	
 	// Make text areas auto scroll to bottom as text get added.
 	document.getElementById("inmsgs").scrollTop = document.getElementById("inmsgs").scrollHeight;

@@ -13,15 +13,19 @@ TODO:
             'error', 'success', 'inmsg', 'stats'
     o Make cnt-C work (see http://stackoverflow.com/questions/17101502/how-to-stop-the-tornado-web-server-with-ctrlc)    
     o Prevent echo and bus_syntax from being unsubscribed directly
+    o Remove test_server_id from sbtester.js
 
 '''
 
+import Queue
 from __builtin__ import True
 import datetime
+import functools
 import json
 import os
 import signal
 import sys
+import threading
 import time
 import tornado.httpserver
 import tornado.ioloop
@@ -31,7 +35,6 @@ import uuid
 
 from redis_bus_python.bus_message import BusMessage
 from schoolbus_test_server import OnDemandPublisher
-import functools
 
 
 sys.path.append(os.path.dirname(__file__))
@@ -44,6 +47,8 @@ sys.path.append(os.path.dirname(__file__))
 BUS_TESTER_SERVER_PORT = 8001
 #BUS_TESTER_SERVER_PORT = 80
 #**********
+
+DO_BLOCK = True
 
 class BusTesterWebController(WebSocketHandler):
     '''
@@ -80,21 +85,7 @@ class BusTesterWebController(WebSocketHandler):
     LOG_LEVEL_INFO  = 2
     LOG_LEVEL_DEBUG = 3
 
-    # ----------------------------- Class Variables ---------------------
-    
-    # UUID --> (OnDemandPublisher, kill_time):
-    test_servers = {}
-    
-    # Class variable to hold all instances of
-    # this class (i.e. of BusTesterWebController).
-    # Needed so that the periodic callback from the
-    # tornado ioloop to function (not method) check_for_bus_msgs()
-    # can find all  BusTesterWebController instances to
-    # call on_bus_message() on. Those methods will then check
-    # their queue that holds the in-messages captured by
-    # their OnDemandPublishers:
-     
-    bus_testers = []
+    # ----------------------------- Methods ---------------------
     
     def __init__(self, application, request, **kwargs):
         self.title = "SchoolBus Tester"
@@ -104,21 +95,25 @@ class BusTesterWebController(WebSocketHandler):
         #self.loglevel = BusTesterWebController.LOG_LEVEL_INFO
         #self.loglevel = BusTesterWebController.LOG_LEVEL_NONE
         
-        # This instance is created to serve one request
-        # from a browser. If that browser never called
-        # before, my_server() will invent a UUID,
-        # create an OnDemandPublisher instance, and save
-        # it in the class var test_servers as value of the UUID key. 
-        # If the browser called before, the request will include a UUID
-        # with which to retrieve the already existing OnDemandPublisher:
+        # Queue to pass requests from the browser, which come in
+        # through the websocket, to the thread that handles them
+        # asynchronously:
         
-        self.test_server_id = None
+        self.browser_request_queue = Queue.Queue() 
         
-        self.msg_queue = None
-        self.stats_queue = None
+        # Callback from ioloop to this instance
+        # to check the above queues of messages
+        # from the schoolbus:
+        
         self.periodic_callback = None
         
-        self._write_to_browser_callback = functools.partial(self._write_to_browser)
+        # Thread that handles all requests from the browser;
+        # pass self for that thread to refer back to this instance:
+        
+        self.browser_interactor_thread = BrowserInteractorThread(self, self.browser_request_queue)
+        # Make thread die if this parent instance goes away:
+        self.browser_interactor_thread.daemon = True
+        self.browser_interactor_thread.start()
         
     def allow_draft76(self):
         '''
@@ -138,24 +133,8 @@ class BusTesterWebController(WebSocketHandler):
         be named 'open'
         '''
         self.logDebug("Open called")
-        
-     
-    def on_close(self):
-        self.logDebug('Websocket was closed; shutting down school test server...')
-        # Stop the checks for incoming messages:
-        if self.periodic_callback is not None:
-            self.periodic_callback.stop()
-        if self.test_server_id is not None:
-            try:
-                (server, kill_time) = BusTesterWebController.test_servers[self.test_server_id] #@UnusedVariable
-                server.stop()
-                server.join(2)
-            except Exception as e:
-                print('Could not shut school test server down: %s' % `e`)
-            
-        
-    def on_message (self, msg):
-        
+    
+    def on_message(self, msg):
         if (msg == 'keepAlive'):
             return
         
@@ -168,103 +147,190 @@ class BusTesterWebController(WebSocketHandler):
             self.return_error({}, "Message from client not good JSON: '%s'" % str(msg))
             return
         
-        # Check whether browser included a test server id; if 
-        # such an ID is absent, then a new server will be 
-        # created as soon as my_server() is called below. But
-        # if the browser does pass a server id, my_server() will
-        # find and use the existing one:
+        # Have the service thread deal with the details:
+        self.browser_request_queue.put_nowait(msg_dict)
         
-        server_id_in_req =  msg_dict.get('server_id', '')
-        self.test_server_id = None if len(server_id_in_req) == 0 else server_id_in_req
-        # Remove the server_id from the reqDict b/c we
-        # are taking care of it here:
-        try:
-            del(msg_dict['server_id'])
-        except:
-            pass
+        return
+    
+    def on_close(self):
+        self.logDebug('Websocket was closed; shutting down school test server...')
         
-        # Special command: killServer takes a server ID, which hopefully
-        # keys to a running schoolbus test server (OnDemandPublisher).
-        # Find that server, close it, and return:
+        self.browser_interactor_thread.stop()
+        self.browser_interactor_thread.join(2)
         
-        if msg_dict.get('killServer', None) is not None:
-            self.kill_a_server(msg_dict['killServer'])
-            self.write_to_browser(json.dumps({'success' : 'OK'}))
-            return 
+    def _write_to_browser(self, msg):
+        '''
+        Write msg to the browser that is connected through
+        the websocket. Don't call this method directly. It
+        is a callback for the tornado ioloop.
         
-        if self.test_server_id is None or len(self.test_server_id) == 0:
-            # First contact by this browser tab; 
-            # Have my_server() create an OnDemandPublisher,
-            # and associate it with a UUID in test_servers:
-            self.my_server
+        :param msg: text to send
+        :type msg: str
+        '''
+        self.write_message(msg)
+    
+    def byteify(self, the_input):
+        '''
+        Turn unicode buried in data structures
+        to str types:
+        
+        :param the_input: data structure to convert
+        :type the_input: <any>
+        '''
+        if isinstance(the_input, dict):
+            return {self.byteify(key):self.byteify(value) for key,value in the_input.iteritems()}
+        elif isinstance(the_input, list):
+            return [self.byteify(element) for element in the_input]
+        elif isinstance(the_input, unicode):
+            return the_input.encode('utf-8')
+        else:
+            return the_input
 
-        # Turn string values 'True', 'False', 'on', 'off' into bools:
-        chkSyntax = msg_dict.get('chkSyntax', None)
-        echo      = msg_dict.get('echo', None)
-        streaming = msg_dict.get('streaming', None)
-        
-        if type(chkSyntax) == str:
-            msg_dict['chkSyntax'] = True if chkSyntax.lower() == 'true' or chkSyntax == 'on' else False
-        if type(echo) == str:            
-            msg_dict['echo'] = True if echo.lower() == 'true' or echo == 'on' else False
-        if type(streaming) == str:            
-            msg_dict['streaming'] = True if streaming.lower() == 'true' or streaming == 'on' else False
+    def logInfo(self, msg):
+        if self.loglevel >= BusTesterWebController.LOG_LEVEL_INFO:
+            print(str(datetime.datetime.now()) + ' info: ' + msg)
+
+    def logErr(self, msg):
+        if self.loglevel >= BusTesterWebController.LOG_LEVEL_ERR:
+            print(str(datetime.datetime.now()) + ' error: ' + msg)
+
+    def logDebug(self, msg):
+        if self.loglevel >= BusTesterWebController.LOG_LEVEL_DEBUG:
+            print(str(datetime.datetime.now()) + ' debug: ' + msg)
+    
+    @classmethod
+    def getCertAndKey(self):
+        '''
+        Return a 2-tuple with full paths, respectively to
+        the SSL certificate, and private key.
+        To find the SSL certificate location, we assume
+        that it is stored in dir '.ssl' in the current
+        user's home dir.
+        We assume the cert file either ends in .cer, or
+        in .crt, and that the key file ends in .key.
+        The first matching files in the .ssl directory
+        are grabbed.
+
+        @return: two-tuple with full path to SSL certificate, and key files.
+        @rtype: (str,str)
+        @raise ValueError: if either of the files are not found.
+
+        '''
+        homeDir = os.path.expanduser("~")
+        sslDir = '%s/.ssl/' % homeDir
+        try:
+            certFileName = next(fileName for fileName in os.listdir(sslDir)
+	                               if fileName.endswith('.cer') or fileName.endswith('.crt'))
+        except StopIteration:
+            raise(ValueError("Could not find ssl certificate file in %s" % sslDir))
+
+        try:
+            privateKeyFileName = next(fileName for fileName in os.listdir(sslDir)
+	                                     if fileName.endswith('.key'))
+        except StopIteration:
+            raise(ValueError("Could not find ssl private key file in %s" % sslDir))
+        return (os.path.join(sslDir, certFileName),
+                os.path.join(sslDir, privateKeyFileName))
+
             
-        # Ensure that streamInterval is a float:
-        try:
-            interval = msg_dict.get('streamInterval', None)
-            # If empty string, indicating request for current
-            # value, the call to get_or_set_server_parm() will
-            # take care of it. But otherwise, floatify:
-            if interval != '':
-                msg_dict['streamInterval'] =  float(interval)
-        except (ValueError, TypeError):
-            self.return_error({}, "Received a non-float for streamInterval from browser: '%s'" % str(interval))
-            return
+class BrowserInteractorThread(threading.Thread):
 
+    # How often to check whether someone called stop()
+    # on this thread:    
+    CHECK_DONE_PERIOD = 1 # second
+    
+    def __init__(self, websocket_comm_obj, browser_request_queue):
+        super(BrowserInteractorThread, self).__init__(name='BrowserReqServerThread')
+        
+        self.websocket_comm_obj = websocket_comm_obj
+        self.browser_request_queue = browser_request_queue
+        self.bus_service = None
+
+        # Queues through which other threads provide
+        # messages that arrive from the SchoolBus to this instance
+        # for transfer over the websocket to the browser:
+        
+        self.bus_msg_queue = None
+        self.bus_stats_queue = None
+        
+        # Callback in parent that safely writes to websocket:
+        self._write_to_browser_callback = functools.partial(self.websocket_comm_obj._write_to_browser)
+        
+        # Create a periodic callback that checks the in-msg and in-stats
+        # queues for msgs/stats to forward to the browser. The
+        # instance() method enforces a singleton ioloop instance:
+        
+        self.periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.on_bus_message),
+                                                                 BusTesterWebController.PERIODIC_IN_MSG_CHECK
+                                                                 )
+        self.periodic_callback.start()
+        
+                
+        self.done = False
+        
+    def stop(self):
+        
+        # Stop the checks for incoming messages:
+        if self.periodic_callback is not None:
+            self.periodic_callback.stop()
+        
+        self.done = True
+        
+    def write_to_browser(self, msg):
+        '''
+        Send a message to the browser on the other end
+        of the websocket. You may call this method from
+        any thread. It schedules the actual write to happen
+        during the next ioloop iteration, which is a 
+        threadsafe procedure. Always use this method to 
+        write to the websocket, don't use self.write_message 
+        anywhere.
+        
+        :param msg: text to send
+        :type msg: string
+        '''
+        tornado.ioloop.IOLoop.instance().add_callback(self._write_to_browser_callback, msg)
+
+    def run(self):
+        
+        while not self.done:
+            
+            try:
+                msg_dict = self.browser_request_queue.get(DO_BLOCK, BrowserInteractorThread.CHECK_DONE_PERIOD)
+            except Queue.Empty:
+                continue 
+        
+            # Turn string values 'True', 'False', 'on', 'off' into bools:
+            chkSyntax = msg_dict.get('chkSyntax', None)
+            echo      = msg_dict.get('echo', None)
+            streaming = msg_dict.get('streaming', None)
+            
+            # Normalize the checkbox values to Python booleans:
+            if type(chkSyntax) == str:
+                msg_dict['chkSyntax'] = True if chkSyntax.lower() == 'true' or chkSyntax == 'on' else False
+            if type(echo) == str:            
+                msg_dict['echo'] = True if echo.lower() == 'true' or echo == 'on' else False
+            if type(streaming) == str:            
+                msg_dict['streaming'] = True if streaming.lower() == 'true' or streaming == 'on' else False
+                
+            # Ensure that streamInterval is a float:
+            try:
+                interval = msg_dict.get('streamInterval', None)
+                # If empty string, indicating request for current
+                # value, the call to get_or_set_server_parm() will
+                # take care of it. But otherwise, floatify:
+                if interval != '':
+                    msg_dict['streamInterval'] =  float(interval)
+            except (ValueError, TypeError):
+                self.return_error({}, "Received a non-float for streamInterval from browser: '%s'" % str(interval))
+                continue
+    
+            response_dict = self.service_browser_request(msg_dict) #@UnusedVariable
+            continue
+        
+    def service_browser_request(self, msg_dict):
+        
         response_dict = {}
-        
-        # Init the server UUID in the response:
-        response_dict['server_id'] = self.test_server_id
-        
-        #******** Exploring problem of hanging sometimes
-        #         when (un)subscribing while publishing:
-#         response_dict['server_id'] = self.test_server_id
-#         self.write_to_browser(json.dumps(response_dict))
-#         print ('got one; stream')
-#         self.my_server.streaming = True
-#         time.sleep(2)
-#         self.my_server.streaming = False
-#         print ('got one; stop stream')
-#         # Danger!!!!:
-#         
-#         print('Stream off')
-#         self.my_server.streaming = False
-#         print('Echo off')
-#         self.my_server.serve_echo = False
-#         print('Echo on')
-#         self.my_server.serve_echo = True
-#         print('Stream on')
-#         self.my_server.streaming = True
-#         
-#         print('Syntax off')
-#         self.my_server.check_syntax = False
-#         self.my_server.check_syntax = True
-#         print('Syntax on')
-# 
-#         print('Getting constants')
-#         self.my_server.standard_msg_len
-#         self.my_server.one_shot_topic
-#         self.my_server.one_shot_content
-#         self.my_server.stream_topic
-#         self.my_server.stream_content
-#         self.my_server.syntax_check_topic
-#         print('Finished getting')
-#         
-#         return
-        #********
-        
-        
         try:
             
             # Are we to fire a one-shot message?
@@ -296,27 +362,22 @@ class BusTesterWebController(WebSocketHandler):
             # parameter values:
             self.write_to_browser(json.dumps(response_dict))
             
-            #******
-            # If a real HTML page were to be sent,
-            # we'd close it out here:
-            # self.write("</body></html>")
-            #******
         except ValueError:
             # Was handled in one of the functions called above:
-            return 
+            return response_dict 
         except Exception as e:
             print('Exception in GET: %s' % `e`)
             self.return_error(response_dict, `e`);
             #*********
             raise
             #*********
-            return
+            return response_dict
         
     def on_bus_message(self, msg=None):
         '''
         Called when a message to which we are subscribed
         comes in. These are msgs on topics explicitly subscribed
-        to via the Web UI. If msg is None, check self.msg_queue
+        to via the Web UI. If msg is None, check self.bus_msg_queue
         for newly arrived msgs from the bus:
         
         :param msg: message to write to browser.
@@ -326,11 +387,11 @@ class BusTesterWebController(WebSocketHandler):
         if msg is None:
             # If message/stats queues have not been initialized
             # yet, just return:
-            if self.msg_queue is None:
+            if self.bus_msg_queue is None:
                 return
             # We check the msg queue for messages:
-            while not self.msg_queue.empty():
-                msg = self.msg_queue.get_nowait()
+            while not self.bus_msg_queue.empty():
+                msg = self.bus_msg_queue.get_nowait()
                 try:
                     self.write_to_browser({"inmsg" : msg + '\r\n'})
                 except Exception as e:
@@ -344,13 +405,13 @@ class BusTesterWebController(WebSocketHandler):
                 return
             
         # Check for new bus statistics to forward to browser:        
-        self.on_bus_stats()              
+        self.on_bus_stats()
 
     def on_bus_stats(self, msg=None):
         '''
         Called when stats about messages to which we are subscribed
         come in. These are msgs on topics explicitly subscribed
-        to via the Web UI. If msg is None, check self.stats_queue
+        to via the Web UI. If msg is None, check self.bus_stats_queue
         for newly arrived msgs from the bus:
         
         :param msg: stats message to write to browser.
@@ -359,8 +420,8 @@ class BusTesterWebController(WebSocketHandler):
         
         if msg is None:
             # We check the stats queue for messages:
-            while not self.stats_queue.empty():
-                msg = self.stats_queue.get_nowait()
+            while not self.bus_stats_queue.empty():
+                msg = self.bus_stats_queue.get_nowait()
                 try:
                     self.write_to_browser({"instat" : msg + '\r\n'})
                 except Exception as e:
@@ -376,32 +437,6 @@ class BusTesterWebController(WebSocketHandler):
     def return_error(self, response_dict, error_str):
         response_dict['error'] = error_str
         self.write_to_browser(json.dumps(response_dict))
-
-    def write_to_browser(self, msg):
-        '''
-        Send a message to the browser on the other end
-        of the websocket. You may call this method from
-        any thread. It schedules the actual write to happen
-        during the next ioloop iteration, which is a 
-        threadsafe procedure. Always use this method to 
-        write to the websocket, don't use self.write_message 
-        anywhere.
-        
-        :param msg: text to send
-        :type msg: string
-        '''
-        tornado.ioloop.IOLoop.instance().add_callback(self._write_to_browser_callback, msg)
-        
-    def _write_to_browser(self, msg):
-        '''
-        Write msg to the browser that is connected through
-        the websocket. Don't call this method directly. It
-        is a callback for the tornado ioloop.
-        
-        :param msg: text to send
-        :type msg: str
-        '''
-        self.write_message(msg)
 
     def get_or_set_server_parm(self, parm_name, parm_val, response_dict):
         
@@ -476,166 +511,79 @@ class BusTesterWebController(WebSocketHandler):
 
     @property
     def my_server(self):
+        '''
+        Return an OnDemandServer bus server singleton.
+        '''
         
-        # Did the request from the browser that
-        # created this instance include a test
-        # server UID? If so, there already is
-        # an OnDemandPublisher instance for that
-        # browser:
-        
-        if self.test_server_id is not None:
-            (server, time_to_kill) = BusTesterWebController.test_servers[self.test_server_id] #@UnusedVariable
-            return server
+        if self.bus_service is not None:
+            return self.bus_service
         
         # Create an OnDemandPubliser that will stream on
-        # the standard topic/content; store it in the
-        # class var topic_servers in a two-tuple:
-        #   (serverInstance, timeToKill)
-        self.test_server_id = uuid.uuid1().hex
+        # the standard topic/content:
          
-        server = OnDemandPublisher(streamMsgs=(None,None))
+        self.bus_service = OnDemandPublisher(streamMsgs=(None,None))
         
         # Queues into which the server will place msgs that
         # arrive on topics subscribed to through the Web UI:
-        self.msg_queue = server.msg_queue
-        self.stats_queue = server.stats_queue
+        self.bus_msg_queue = self.bus_service.bus_msg_queue
+        self.bus_stats_queue = self.bus_service.bus_stats_queue
         
-        # Create a periodic callback that checks the in-msg and in-stats
-        # queues for msgs/stats to forward to the browser. The
-        # instance() method enforces a singleton ioloop instance:
+        # Before starting the bus server, pause its message streaming server:
+        self.bus_service.streaming = False
+        self.bus_service.start()
+        self.bus_service.serve_echo = True
+        self.bus_service.check_syntax = True
+        return self.bus_service
         
-        self.periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.on_bus_message),
-                                                                 BusTesterWebController.PERIODIC_IN_MSG_CHECK
-                                                                 )
-        self.periodic_callback.start()
-        
-        # If this instance of BusTesterWebController isn't
-        # in the list of BusTesterWebController instances,
-        # add it now that we have msg and stats queues; that
-        # the periodic call to on_bus_message() via check_for_bus_msgs()
-        # has queues to look at:
-        if self not in BusTesterWebController.bus_testers:
-            BusTesterWebController.bus_testers.append(self)
-        
-        
-        BusTesterWebController.test_servers[self.test_server_id] = \
-            (server, time.time() + BusTesterWebController.DEFAULT_TIME_TO_LIVE)
-            
-        # Before starting the server, pause the message streaming server:
-        server.streaming = False
-        server.start()
-        server.serve_echo = True
-        server.check_syntax = True
-        return server
-        
-    def kill_a_server(self, serverId):
-        (server_to_kill, kill_time) = self.test_servers.get(serverId, (None, None)) #@UnusedVariable
-        if server_to_kill is None:
-            # Browser app passed a server id that we don't know about:
-            self.return_error({}, "Warning: attempt to kill server '%s', which is not running." % str(serverId))
-            raise ValueError("Warning: attempt to kill server '%s', which is not running.")
-        if server_to_kill.is_running():
-            server_to_kill.stop()
-            server_to_kill.join(2)
-            del self.test_servers[serverId]
-                                       
     def server_running(self):
         try:
-            return self.test_servers[self].running
+            return self.bus_service.running
         except Exception:
             return False 
-        
 
     def ensure_lower_non_array(self, val):
+        '''
+        Given a string, or array of strings, return
+        an array (possibly containing just the passed-in
+        string), in which all strings are lower case:
+        
+        :param val:
+        :type val:
+        '''
         if type(val) == list:
             new_val = val[0].lower()
         else:
             new_val = val.lower()
         return new_val
         
-    def byteify(self, the_input):
-        '''
-        Turn unicode buried in data structures
-        to str types:
-        
-        :param the_input: data structure to convert
-        :type the_input: <any>
-        '''
-        if isinstance(the_input, dict):
-            return {self.byteify(key):self.byteify(value) for key,value in the_input.iteritems()}
-        elif isinstance(the_input, list):
-            return [self.byteify(element) for element in the_input]
-        elif isinstance(the_input, unicode):
-            return the_input.encode('utf-8')
-        else:
-            return the_input
-
     def logInfo(self, msg):
-        if self.loglevel >= BusTesterWebController.LOG_LEVEL_INFO:
-            print(str(datetime.datetime.now()) + ' info: ' + msg)
+        self.websocket_comm_obj.logInfo(msg)
 
     def logErr(self, msg):
-        if self.loglevel >= BusTesterWebController.LOG_LEVEL_ERR:
-            print(str(datetime.datetime.now()) + ' error: ' + msg)
+        self.websocket_comm_obj.logErr(msg)
 
     def logDebug(self, msg):
-        if self.loglevel >= BusTesterWebController.LOG_LEVEL_DEBUG:
-            print(str(datetime.datetime.now()) + ' debug: ' + msg)
-
-    @classmethod
-    def getCertAndKey(self):
-        '''
-        Return a 2-tuple with full paths, respectively to
-        the SSL certificate, and private key.
-        To find the SSL certificate location, we assume
-        that it is stored in dir '.ssl' in the current
-        user's home dir.
-        We assume the cert file either ends in .cer, or
-        in .crt, and that the key file ends in .key.
-        The first matching files in the .ssl directory
-        are grabbed.
-
-        @return: two-tuple with full path to SSL certificate, and key files.
-        @rtype: (str,str)
-        @raise ValueError: if either of the files are not found.
-
-        '''
-        homeDir = os.path.expanduser("~")
-        sslDir = '%s/.ssl/' % homeDir
-        try:
-            certFileName = next(fileName for fileName in os.listdir(sslDir)
-	                               if fileName.endswith('.cer') or fileName.endswith('.crt'))
-        except StopIteration:
-            raise(ValueError("Could not find ssl certificate file in %s" % sslDir))
-
-        try:
-            privateKeyFileName = next(fileName for fileName in os.listdir(sslDir)
-	                                     if fileName.endswith('.key'))
-        except StopIteration:
-            raise(ValueError("Could not find ssl private key file in %s" % sslDir))
-        return (os.path.join(sslDir, certFileName),
-                os.path.join(sslDir, privateKeyFileName))
+        self.websocket_comm_obj.logDebug(msg)
 
 
-    @classmethod  
-    def makeApp(self):
-        '''
-        Create the tornado application, making it 
-        callable via http://myServer.stanford.edu:<port>/bus
-        '''
+def makeApp():
+    '''
+    Create the tornado application, making it 
+    callable via http://myServer.stanford.edu:<port>/bus
+    '''
 #*****************
 #         handlers = [
 #             (r"/controller", BusTesterWebController),
 #             (r"/bus/(.*)", tornado.web.StaticFileHandler, {'path' : './html',  "default_filename": "index.html"}),
 #             ]
-        handlers = [
-             (r"/controller", BusTesterWebController),
-             ]
+    handlers = [
+         (r"/controller", BusTesterWebController),
+         ]
 #*****************
 
-        application = tornado.web.Application(handlers , debug=False)
-        
-        return application
+    application = tornado.web.Application(handlers , debug=False)
+    
+    return application
 
 
 # Note: function not method:
@@ -674,11 +622,11 @@ def shutdown():
     stop_loop()    
     
 
-signal.signal(signal.SIGINT, sig_handler)
+#****signal.signal(signal.SIGINT, sig_handler)
 
 if __name__ == "__main__":
 
-    application = BusTesterWebController.makeApp()
+    application = makeApp()
     
     # Starting multiple Python processes on multiple cores:
 #     server = tornado.httpserver.HTTPServer(application)

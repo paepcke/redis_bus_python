@@ -101,10 +101,10 @@ class OnDemandPublisher(threading.Thread):
     
     When asked to **listen** to some topic, messages on that
     topic are received and counted. Then the message is
-    placed into a queue where it can be picked up (self.msg_queue). 
+    placed into a queue where it can be picked up (self.bus_msg_queue). 
     If nobody attends to the queue, it fills up, and then sits there;
     i.e. no big harm. Statistics printing is as for echoing.
-    Stats are placed on the stats_queue for consumption by anyone
+    Stats are placed on the bus_stats_queue for consumption by anyone
     interested (or not).
     
     Messages sent in a **stream** by sendMessageStream()
@@ -151,8 +151,8 @@ class OnDemandPublisher(threading.Thread):
             message with the same content, but different timestamp as a synchronous call. 
         :type serveEchos: bool
         :param listenOn: if this parameter provides an array of topic(s), messages on these
-            topics are received and counted, then placed on self.msg_queue. Intermittent reception counts
-            and reception rates are printed to the console, and place on self.stats_queue.
+            topics are received and counted, then placed on self.bus_msg_queue. Intermittent reception counts
+            and reception rates are printed to the console, and place on self.bus_stats_queue.
         :type listenOn: {None | [string]}
         :param streamMsgs: if True, a continuous stream of messages are sent to
             STREAM_TOPIC. The timestamp is changed each time.
@@ -203,10 +203,10 @@ class OnDemandPublisher(threading.Thread):
         # Queue into which incoming messages are fed
         # for consumers to communicated to clients, such
         # as a Web UI:
-        self.msg_queue   = Queue.Queue(MAX_SAVED_MSGS)
+        self.bus_msg_queue   = Queue.Queue(MAX_SAVED_MSGS)
         
         # Queue to which aggregate stats will be written:  
-        self.stats_queue = Queue.Queue(MAX_SAVED_MSGS) 
+        self.bus_stats_queue = Queue.Queue(MAX_SAVED_MSGS) 
 
         # Handle Cnt-C properly:
         signal.signal(signal.SIGINT, functools.partial(self.stop))
@@ -758,22 +758,22 @@ class OnDemandPublisher(threading.Thread):
         if self.numReceived % 1000 == 0:
             stats_msg = 'Rxed %d' % self.numReceived
             self.logInfo(stats_msg)
-            self.stats_queue.put_nowait(stats_msg)
+            self.bus_stats_queue.put_nowait(stats_msg)
             
         if self.numReceived % 10000 == 0:
             # Messages per second:
             msgs_per_sec = 10000.0 / (time.time() - self.batch_start_time)
             stats_msg1 = 'Rx (no echo): %f Msgs/sec' % msgs_per_sec
             self.logInfo(stats_msg1)
-            if not self.stats_queue.full():
-                self.stats_queue.put_nowait(stats_msg1)
+            if not self.bus_stats_queue.full():
+                self.bus_stats_queue.put_nowait(stats_msg1)
             self.batch_start_time = time.time()
                         
         topic = busMsg.topicName
         matching_subscribed_topic = self.findTopic(topic, self.topics_to_rx)
         if matching_subscribed_topic is not None:
-            if not self.msg_queue.full():
-                self.msg_queue.put_nowait(str(datetime.datetime.now()) +\
+            if not self.bus_msg_queue.full():
+                self.bus_msg_queue.put_nowait(str(datetime.datetime.now()) +\
                                           "--%s: " % matching_subscribed_topic +\
                                           busMsg.content)
     
@@ -835,7 +835,7 @@ class OnDemandPublisher(threading.Thread):
         if not self.printedResetting:
             resetMsg = 'Resetting (echoed %d)' % self.numEchoed
             self.logInfo(resetMsg)
-            self.stats_queue.put_nowait(resetMsg)
+            self.bus_stats_queue.put_nowait(resetMsg)
             self.printedResetting = True
         self.numEchoed = 0
         self.startTime = time.time()
@@ -867,7 +867,7 @@ class OnDemandPublisher(threading.Thread):
             timeElapsed = float(currTime) - float(self.startTime)
             rateMsg = 'Msgs per second: %d' % (timeElapsed / self.numEchoed)
             self.logInfo(rateMsg)
-            self.stats_queue.put_nowait(rateMsg)
+            self.bus_stats_queue.put_nowait(rateMsg)
             
     def run(self):
         while not self.done:
