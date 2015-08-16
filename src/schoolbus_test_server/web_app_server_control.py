@@ -23,18 +23,22 @@ import datetime
 import functools
 import json
 import os
+import re
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
 import tornado.httpserver
 import tornado.ioloop
 import tornado.web
-from tornado.websocket import WebSocketHandler
+from tornado.websocket import WebSocketHandler, WebSocketClosedError
+import traceback
 import uuid
 
 from redis_bus_python.bus_message import BusMessage
+from redis_bus_python.redis_lib.exceptions import TimeoutError
 from schoolbus_test_server import OnDemandPublisher
 
 
@@ -46,6 +50,11 @@ sys.path.append(os.path.dirname(__file__))
 BUS_TESTER_WEBSOCKET_PORT = 8001
 
 DO_BLOCK = True
+
+# Time to wait in join() for child threads to 
+# terminate:
+JOIN_WAIT_TIME = 5 # sec
+
 
 class BusTesterWebController(WebSocketHandler):
     '''
@@ -66,12 +75,6 @@ class BusTesterWebController(WebSocketHandler):
     '''
 
     # ----------------------------- Class-Level Constants ---------------------
-    # Number of seconds after which test server
-    # instances get killed, because we assume that
-    # the browser that created that server is
-    # abandoned:
-    
-    DEFAULT_TIME_TO_LIVE = 2.0 * 3600.0 # hrs * sec/hr
     
     # Periodic check for incoming messages to forward to browser:
     
@@ -159,7 +162,16 @@ class BusTesterWebController(WebSocketHandler):
         self.logDebug('Websocket was closed; shutting down school test server...')
         
         self.browser_interactor_thread.stop()
-        self.browser_interactor_thread.join(2)
+        self.browser_interactor_thread.join(JOIN_WAIT_TIME)
+        if self.browser_interactor_thread.is_alive():
+            raise TimeoutError("Unable to stop browser interactor thread '%s'." % self.browser_interactor_thread.name)
+        
+        self.browser_interactor_thread = None
+        self.logDebug('School test server is shut down...')
+        #**********
+        #threadStacktraces()
+        #threading.enumerate()
+        #**********
         
     def _write_to_browser(self, msg):
         '''
@@ -170,7 +182,10 @@ class BusTesterWebController(WebSocketHandler):
         :param msg: text to send
         :type msg: str
         '''
-        self.write_message(msg)
+        try:
+            self.write_message(msg)
+        except WebSocketClosedError:
+            self.logErr("Attempt to write to socket after it was closed.")
     
     def byteify(self, the_input):
         '''
@@ -265,21 +280,24 @@ class BrowserInteractorThread(threading.Thread):
         
         self.periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.on_bus_message),
                                                                  BusTesterWebController.PERIODIC_IN_MSG_CHECK
+
                                                                  )
+        self.done = False
         self.periodic_callback.start()
         
-                
-        self.done = False
-        
     def stop(self):
-        
+
         # Stop the checks for incoming messages:
         if self.periodic_callback is not None:
             self.periodic_callback.stop()
-        self.my_server.stop()
-
+            
         self.done = True
+        # Immediately unblock the queue
+        self.websocket_comm_obj.browser_request_queue.put_nowait('\0')
         
+        if self.server_running():
+            self.my_server.stop()
+
     def write_to_browser(self, msg):
         '''
         Send a message to the browser on the other end
@@ -301,6 +319,10 @@ class BrowserInteractorThread(threading.Thread):
             
             try:
                 msg_dict = self.browser_request_queue.get(DO_BLOCK, BrowserInteractorThread.CHECK_DONE_PERIOD)
+                # Double check: another way to release
+                # the block of this queue is to feed it a '\0':
+                if msg_dict == '\0':
+                    continue
             except Queue.Empty:
                 continue 
         
@@ -331,6 +353,7 @@ class BrowserInteractorThread(threading.Thread):
     
             response_dict = self.service_browser_request(msg_dict) #@UnusedVariable
             continue
+        return
         
     def service_browser_request(self, msg_dict):
         
@@ -544,7 +567,7 @@ class BrowserInteractorThread(threading.Thread):
         
     def server_running(self):
         try:
-            return self.bus_service.running
+            return self.bus_service is not None and self.bus_service.running
         except Exception:
             return False 
 
@@ -608,7 +631,11 @@ def shutdown():
     for server in BusTesterWebController.test_servers:
         print("Stopping %s" % str(server))
         server.stop()
-        server.join(2)
+        server.join(5)
+        if server.is_alive():
+            raise TimeoutError("Unable to stop BusTesterWebController thread '%s'." % server.name)
+            raise TimeoutError('Unable to stop BusTesterWebController thread.')
+        
 
     global http_server
     print("Stopping HTTP server...")
@@ -631,7 +658,41 @@ def shutdown():
 
 #****signal.signal(signal.SIGINT, sig_handler)
 
+def is_running(process):
+    '''
+    Return true if process with given name is
+    running.
+    
+    :param process: process name as appears in ps -axw
+    :type process: string
+    '''
+    search_proc = subprocess.Popen(['ps', 'axw'],stdout=subprocess.PIPE)
+    for ps_line in search_proc.stdout:
+        if re.search(process, ps_line):
+            return True 
+    return False
+
+def threadStacktraces():
+    sys.stderr, "\n*** STACKTRACE - START ***\n"
+    code = []
+    for threadId, stack in sys._current_frames().items():
+        code.append("\n# ThreadID: %s" % threadId)
+        for filename, lineno, name, line in traceback.extract_stack(stack):
+            code.append('File: "%s", line %d, in %s' % (filename,
+                                                        lineno, name))
+            if line:
+                code.append("  %s" % (line.strip()))
+    
+    for line in code:
+        print >> sys.stderr, line
+    print >> sys.stderr, "\n*** STACKTRACE - END ***\n"   
+
+
 if __name__ == "__main__":
+
+    # Make sure the UI content server is running:
+    if not is_running('sbtester_content_server.py'):
+        subprocess.call(['python', 'src/schoolbus_test_server/sbtester_content_server.py'])
 
     application = makeApp()
     

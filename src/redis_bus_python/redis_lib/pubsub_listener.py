@@ -15,10 +15,6 @@ from redis_bus_python.redis_lib.connection import Connection
 
 from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError
 
-#**********
-num_closed = 0
-#**********
-
 class PubSubListener(threading.Thread):
     """
     PubSub provides subscribe, unsubscribe and listen support to Redis channels.
@@ -31,11 +27,6 @@ class PubSubListener(threading.Thread):
 
     """
 
-    #**********
-    num_closed = 0
-    #**********
-
-    
     PUBLISH_MESSAGE_TYPES = ('message', 'pmessage')
     UNSUBSCRIBE_MESSAGE_TYPES = ('unsubscribe', 'punsubscribe')
     SUBSCRIBE_MESSAGE_TYPES = ('subscribe', 'psubscribe')
@@ -112,6 +103,9 @@ class PubSubListener(threading.Thread):
         # of its recv() on the socket to the
         # Redis server:
         self.reset()
+        
+        self.connection_pool.shutdown_all()
+        self.oneshot_connection_pool.shutdown_all()        
 
     def run(self):
         # Keep hanging on the socket to the
@@ -146,10 +140,6 @@ class PubSubListener(threading.Thread):
             # we know when a prior close() call was the cause,
             # and just exit this PubSub thread:
             if self.done:
-                #********
-                PubSubListener.num_closed += 1
-                print("Closing PubSub thread. " + str(PubSubListener.num_closed))
-                #*******
                 return
             else:
                 # An actual error occurred:

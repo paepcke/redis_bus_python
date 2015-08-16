@@ -128,6 +128,7 @@ class Connection(object):
         self.encoding_errors = encoding_errors
         self.decode_responses = decode_responses
         self._sock = None
+        self._parser = None
         self._description_args = {
             'host': self.host,
             'port': self.port,
@@ -135,6 +136,15 @@ class Connection(object):
             'name' : self._name
         }
         self._connect_callbacks = []
+
+    def shutdown(self):
+        '''
+        Free resources with the assumption that this connection
+        will never be used again. Example: stop parser thread.
+        '''
+        self.disconnect()
+        if self._parser is not None:
+            self._parser.shutdown()
 
     def __repr__(self):
         return 'Connection<host=%s,port=%s,db=%s,name=%s>' % (self.host,self.port,self.db,self.name)
@@ -1083,6 +1093,13 @@ class ConnectionPool(object):
             
         for conn in self._available_connections:
             conn.disconnect()
+
+    def shutdown_all(self):
+        self.disconnect_all()
+        for connection in self._in_use_connections:
+            connection.shutdown()
+        for connection in self._available_connections:
+            connection.shutdown()
 
 class BlockingConnectionPool(ConnectionPool):
     """

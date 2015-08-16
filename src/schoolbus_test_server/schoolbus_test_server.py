@@ -23,7 +23,11 @@ import traceback
 
 from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_bus import BusAdapter
+from redis_bus_python.redis_lib.exceptions import TimeoutError
 
+# Time to wait in join() for child threads to 
+# terminate:
+JOIN_WAIT_TIME = 5 # sec
 
 # Topic on which echo server listens:
 ECHO_TOPIC = 'echo'
@@ -168,8 +172,8 @@ class OnDemandPublisher(threading.Thread):
         '''
         threading.Thread.__init__(self)
         
-        #self.loglevel = OnDemandPublisher.LOG_LEVEL_DEBUG
-        self.loglevel = OnDemandPublisher.LOG_LEVEL_INFO
+        self.loglevel = OnDemandPublisher.LOG_LEVEL_DEBUG
+        #self.loglevel = OnDemandPublisher.LOG_LEVEL_INFO
         #self.loglevel = OnDemandPublisher.LOG_LEVEL_NONE
         
         #***********
@@ -539,8 +543,9 @@ class OnDemandPublisher(threading.Thread):
             # (though not from syntax checker and echo):
             if ((type(new_val) == str and len(new_val) == 0)) or\
                 (type(new_val) == list and len(new_val) == 1 and len(new_val[0]) == 0):
-                for topic in self.topics_to_rx:
+                for (indx, topic) in enumerate(self.topics_to_rx):
                     self.unsubscribeFromTopicOrPattern(topic)
+                    del self.topics_to_rx[indx]
                 return
             # We are given one or more topics. Tolerate
             # comma-separated, space-separated strings, 
@@ -844,9 +849,17 @@ class OnDemandPublisher(threading.Thread):
 
     def stop(self, signum=None, frame=None):
         try:
+            self.logDebug('Unsubscribing from echo...')
+            self.serve_echo = False
+            self.logDebug('Unsubscribing from check_syntax...')
+            self.check_syntax = False
+            
             self.logInfo('Shutting down streamer thread...')
             self.msg_streamer.stop(signum=None, frame=None)
-            self.msg_streamer.join(1)
+            self.msg_streamer.join(JOIN_WAIT_TIME)
+            if self.msg_streamer.is_alive():
+                raise TimeoutError("Unable to stop message streamer thread '%s'." % self.msg_streamer.name)
+            
         except Exception as e:
             print("Error while shutting down message streamer thread: '%s'" % `e`)
 
@@ -1102,6 +1115,6 @@ if __name__ == '__main__':
     
     # Pause till cnt-C causes stop() to be called on the thread:
     signal.pause()
-    testServer.join()
+    testServer.join(JOIN_WAIT_TIME)
 
 

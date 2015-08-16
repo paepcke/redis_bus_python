@@ -25,8 +25,11 @@ import types
 
 from bus_message import BusMessage
 from redis_bus_python import redis_lib
-from redis_bus_python.redis_lib.exceptions import ConnectionError
+from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError
 
+# Time to wait in join() for child threads to 
+# terminate:
+JOIN_WAIT_TIME = 5 # sec
 
 class BusAdapter(object):
     '''
@@ -178,6 +181,10 @@ class BusAdapter(object):
         except AttributeError:
             pattern_str = None
             
+        # Already subscribed to this topic/pattern?
+        if self.subscribedTo(pattern_str if pattern_str is not None else topicIdentifier):
+            return
+            
         if threaded:
             delivery_queue = Queue.Queue()
             # Spin off a thread that will listen on the queue:
@@ -236,7 +243,10 @@ class BusAdapter(object):
                 # Wait for thread to finish; timeout is a bit more
                 # than the 'stop-looking-at-queue' timeout used to check
                 # for periodic thread stoppage:
-                deliveryThread.join()
+                deliveryThread.join(JOIN_WAIT_TIME)
+                if deliveryThread.is_alive():
+                    raise TimeoutError("Unable to stop delivery thread '%s'." % deliveryThread.name)
+
             self.topicThreads = {}
         else:
             try:
@@ -244,7 +254,10 @@ class BusAdapter(object):
                 # Wait for thread to finish; timeout is a bit more
                 # than the 'stop-looking-at-queue' timeout used to check
                 # for periodic thread stoppage:
-                self.topicThreads[topicIdentifier].join()
+                self.topicThreads[topicIdentifier].join(JOIN_WAIT_TIME)
+                if self.topicThreads[topicIdentifier].is_alive():
+                    raise TimeoutError("Unable to stop topicThreads[%s] thread '%s'." %\
+                                       (topicIdentifier, self.topicThreads[topicIdentifier].name))
                 
                 del self.topicThreads[topicIdentifier]
             except KeyError:
@@ -293,22 +306,39 @@ class BusAdapter(object):
         return topic in self.mySubscriptions()
         
     def close(self):
-        for subscription in self.mySubscriptions():
-            try:
-                self.unsubscribeFromTopic(subscription)
-            except Exception as e:
-                if type(e) == ConnectionError:
-                    continue
-            
-        # Stop all the delivery threads:
-        for topicThread in self.topicThreads.values():
-            topicThread.stop()
-            # Wait just a bit longer than the periodic
-            # 'check whether to stop' timeout of the
-            # delivery threads' queue hanging: 
-            topicThread.join()
-        self.pub_sub.close()
-        self.pub_sub.join(2)
+        exceptions = []
+
+        try:        
+            for subscription in self.mySubscriptions():
+                try:
+                    self.unsubscribeFromTopic(subscription)
+                except Exception as e:
+                    if type(e) == ConnectionError:
+                        continue
+                    else:
+                        exceptions.append(`e`)
+                
+            # Stop all the delivery threads:
+            for topicThread in self.topicThreads.values():
+                topicThread.stop()
+                # Wait just a bit longer than the periodic
+                # 'check whether to stop' timeout of the
+                # delivery threads' queue hanging: 
+                topicThread.join(JOIN_WAIT_TIME)
+                if topicThread.is_alive():
+                    #raise TimeoutError("Unable to stop topicThread '%s'." % topicThread.name)
+                    exceptions.append("Unable to stop topicThread '%s'." % topicThread.name)
+                
+            self.pub_sub.close()
+            self.pub_sub.join(JOIN_WAIT_TIME)
+            if self.pub_sub.is_alive():
+                #raise TimeoutError("Unable to stop pub_sub thread '%s'." % self.pub_sub.name)
+                exceptions.append("Unable to stop pub_sub thread '%s'." % self.pub_sub.name)
+        finally:
+            if len(exceptions) > 0:
+                all_error_msgs = '; '.join(exceptions)
+                raise RuntimeError(all_error_msgs)
+        
 
 # --------------------------  Private Methods ---------------------
 

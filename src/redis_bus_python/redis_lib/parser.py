@@ -5,29 +5,27 @@ Created on Jul 24, 2015
 '''
 
 from redis_bus_python.redis_lib._compat import byte_to_chr, nativestr
-
+from redis_bus_python.redis_lib.exceptions import ConnectionError  # @UnusedImport
+from redis_bus_python.redis_lib.exceptions import InvalidResponse  # @UnusedImport
 from redis_bus_python.redis_lib.exceptions import NoScriptError, ExecAbortError, ReadOnlyError, \
-    ResponseError, BusyLoadingError
-    
-# Redis library exception types not currently used in this module: 
-# from redis_bus_python.redis_lib.exceptions import BusyLoadingError, NoScriptError, ExecAbortError, ReadOnlyError 
-    
-# from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
-#     TimeoutError, InvalidResponse, AuthenticationError \
-    
-
-    
-from redis_bus_python.redis_lib.exceptions import ConnectionError #@UnusedImport
-from redis_bus_python.redis_lib.exceptions import InvalidResponse #@UnusedImport
+    ResponseError, BusyLoadingError, TimeoutError
 from redis_bus_python.redis_lib.socket_reader import SocketLineReader
 
 
+# Redis library exception types not currently used in this module: 
+# from redis_bus_python.redis_lib.exceptions import BusyLoadingError, NoScriptError, ExecAbortError, ReadOnlyError 
+# from redis_bus_python.redis_lib.exceptions import RedisError, ConnectionError, \
+#     TimeoutError, InvalidResponse, AuthenticationError \
 SERVER_CLOSED_CONNECTION_ERROR = "Connection closed by server."
 
 SYM_STAR = '*'
 SYM_DOLLAR = '$'
 SYM_CRLF = '\r\n'
 SYM_EMPTY = ''
+
+# Time to wait in join() for child threads to 
+# terminate:
+JOIN_WAIT_TIME = 5 # sec
 
 class Token(object):
     """
@@ -55,6 +53,10 @@ class BaseParser(object):
         'NOSCRIPT': NoScriptError,
         'READONLY': ReadOnlyError,
     }
+    
+    def shutdown(self):
+        # Nothing to clean up:
+        return
     
     def parse_error(self, response):
         "Parse an error response"
@@ -160,6 +162,17 @@ class PythonParser(BaseParser):
         self.socket_read_size = socket_read_size
         self._sock = None
         self._buffer = None
+               
+    def shutdown(self):
+        '''
+        Free all resources with the assumption that
+        this instance will never be used again.
+        '''
+        if self._buffer is not None:
+            self._buffer.close()
+            self._buffer.join(JOIN_WAIT_TIME)
+            if self._buffer.is_alive():
+                raise TimeoutError("Could not stop SocketLineReader in PythonParser instance.")
                 
     def __del__(self):
         try:

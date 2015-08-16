@@ -32,6 +32,8 @@ function SbTesterControl() {
 	
 	var connectAttemptTime = null;
 	
+	var ws = null;
+	
 	/* ------------------------------------ Methods ------------------------*/
 	
 	this.construct = function() {
@@ -48,11 +50,24 @@ function SbTesterControl() {
 			}
 		};
 		
-
 		connectAttemptTime = new Date();
+		
+	}();
+
+	var sendKeepAlive = function() {
+		//var req = buildRequest("keepAlive", "");
+		var req = "keepAlive";
+		if (ws === null) {
+			initWebsocket();
+		}
+		ws.send(req);
+	}
+
+	this.initWebsocket = function() {
 		//*********
 		//ws = new WebSocket("ws://" + originHost + ':' + controllerWebsocketPort + originDir);
 		ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
+
 		//*********
 		
 		ws.onopen = function() {
@@ -85,12 +100,6 @@ function SbTesterControl() {
 			} 
 		}
 
-	    var sendKeepAlive = function() {
-			//var req = buildRequest("keepAlive", "");
-	    	var req = "keepAlive";
-			ws.send(req);
-	    }
-		
 		ws.onmessage = function(evt) {
 		    // Internalize the JSON
 		    // e.g. "{resp : "courseList", "args" : ['course1','course2']"
@@ -104,8 +113,7 @@ function SbTesterControl() {
 		    processServerResponse(argsObj);
 		}
 		
-		
-	}();
+	}
 	
 	this.submit = function() {
 		var parmsDict = {'strLen' : document.getElementById('strLen').value,
@@ -124,6 +132,9 @@ function SbTesterControl() {
 	}
 	
 	this.wsReady = function() {
+		if (ws === null) {
+			initWebsocket();
+		}
 		return ws.readyState == WEBSOCKET_READY_STATE;
 	}
 	
@@ -132,6 +143,9 @@ function SbTesterControl() {
 	}
 
 	var send = function(msg) {
+		if (ws === null) {
+			initWebsocket();
+		}
 		if (ws.readyState != WEBSOCKET_READY_STATE) {
 			ws.onreadystatechange = function(msg) {
 				if (ws.readyState == WEBSOCKET_READY_STATE) {
@@ -380,6 +394,7 @@ window.onload = function() {
 		document.getElementById("instats").value = '';
 		});
 	
-	// Have the form fields filled in with current server parameter values: 
-	//*****sbTesterControl.submit();
+	// Have the form fields filled in with current server parameter values:
+	sbTesterControl.initWebsocket();
+	window.setTimeout(function () {sbTesterControl.submit();}, 100);
 }

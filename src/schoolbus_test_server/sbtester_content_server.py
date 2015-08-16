@@ -68,8 +68,9 @@ class UiContentServer(tornado.web.RequestHandler):
         '''
 
         handlers = [
-            (r"/bus/(.*)", tornado.web.StaticFileHandler, 
-             {'path' : './html',  "default_filename": "index.html"}),
+             (r"/(favicon\.ico)", tornado.web.StaticFileHandler, {'path' : './html'}),
+             (r"/bus/(.*)", tornado.web.StaticFileHandler, 
+                   {'path' : './html',  "default_filename": "index.html"}),
             ]
         application = tornado.web.Application(handlers, debug=False)
         return application
