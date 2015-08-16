@@ -208,9 +208,6 @@ class OnDemandPublisher(threading.Thread):
         # Queue to which aggregate stats will be written:  
         self.bus_stats_queue = Queue.Queue(MAX_SAVED_MSGS) 
 
-        # Handle Cnt-C properly:
-        signal.signal(signal.SIGINT, functools.partial(self.stop))
-        
         # Create a 'standard' message to send out
         # when asked to via SIGUSR1 or the Web:
 
@@ -846,14 +843,15 @@ class OnDemandPublisher(threading.Thread):
         threading.Timer(OnDemandPublisher.MAX_IDLE_TIME, functools.partial(self.resetEchoedCounter)).start()
 
     def stop(self, signum=None, frame=None):
-        self.done = True
-        self.interruptEvent.set()
         try:
             self.logInfo('Shutting down streamer thread...')
             self.msg_streamer.stop(signum=None, frame=None)
             self.msg_streamer.join(1)
         except Exception as e:
             print("Error while shutting down message streamer thread: '%s'" % `e`)
+
+        self.done = True
+        self.interruptEvent.set()
         
         
     def printTiming(self, startTime=None):
@@ -942,13 +940,14 @@ class MessageOutStreamer(threading.Thread):
         while not self.done:
             self.busMsg.time = time.time()
             self.streamBus.publish(self.busMsg)
-            while self._paused:
+            while self._paused and not self.done:
                 time.sleep(1)
             if self._stream_interval > 0:
                 time.sleep(self._stream_interval)
             
     def stop(self, signum, frame):
         self.done = True
+        self.streamBus.close()
         
 
 def printThreadTraces():

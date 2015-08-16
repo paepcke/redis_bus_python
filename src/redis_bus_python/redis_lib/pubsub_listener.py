@@ -15,6 +15,9 @@ from redis_bus_python.redis_lib.connection import Connection
 
 from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError
 
+#**********
+num_closed = 0
+#**********
 
 class PubSubListener(threading.Thread):
     """
@@ -27,6 +30,11 @@ class PubSubListener(threading.Thread):
     subscriptions (self.pattern).
 
     """
+
+    #**********
+    num_closed = 0
+    #**********
+
     
     PUBLISH_MESSAGE_TYPES = ('message', 'pmessage')
     UNSUBSCRIBE_MESSAGE_TYPES = ('unsubscribe', 'punsubscribe')
@@ -138,7 +146,10 @@ class PubSubListener(threading.Thread):
             # we know when a prior close() call was the cause,
             # and just exit this PubSub thread:
             if self.done:
-                print("Closing PubSub thread.")
+                #********
+                PubSubListener.num_closed += 1
+                print("Closing PubSub thread. " + str(PubSubListener.num_closed))
+                #*******
                 return
             else:
                 # An actual error occurred:
@@ -248,7 +259,8 @@ class PubSubListener(threading.Thread):
             return command(*args)
         except (ConnectionError, TimeoutError) as e:
             connection.disconnect()
-            if not connection.retry_on_timeout and isinstance(e, TimeoutError):
+            if not (connection.retry_on_timeout and isinstance(e, TimeoutError)) \
+                or self.done:
                 raise
             # Connect manually here. If the Redis server is down, this will
             # fail and raise a ConnectionError as desired.

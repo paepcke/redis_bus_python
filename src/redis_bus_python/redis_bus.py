@@ -25,6 +25,7 @@ import types
 
 from bus_message import BusMessage
 from redis_bus_python import redis_lib
+from redis_bus_python.redis_lib.exceptions import ConnectionError
 
 
 class BusAdapter(object):
@@ -293,7 +294,11 @@ class BusAdapter(object):
         
     def close(self):
         for subscription in self.mySubscriptions():
-            self.unsubscribeFromTopic(subscription)
+            try:
+                self.unsubscribeFromTopic(subscription)
+            except Exception as e:
+                if type(e) == ConnectionError:
+                    continue
             
         # Stop all the delivery threads:
         for topicThread in self.topicThreads.values():

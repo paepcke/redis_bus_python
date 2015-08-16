@@ -1058,8 +1058,16 @@ class ConnectionPool(object):
         self._checkpid()
         if connection.pid != self.pid:
             return
-        self._in_use_connections.remove(connection)
-        self._available_connections.append(connection)
+
+        # Very fast starting and stopping of server
+        # can cause connection already to have been
+        # removed:
+        try:
+            self._in_use_connections.remove(connection)
+        except KeyError:
+            pass
+        if connection not in self._available_connections:
+            self._available_connections.append(connection)
 
     def disconnect(self):
         "Disconnects all connections in the pool"

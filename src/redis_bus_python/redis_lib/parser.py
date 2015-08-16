@@ -94,7 +94,13 @@ class BaseParser(object):
         if response is None:
             response = socket_buffer.readline(block=block, timeout=timeout)
             
-        byte, response = byte_to_chr(response[0]), response[1:]
+        # Guard against closed or semi-closed sockets having
+        # returned bad data:
+        try:
+            byte, response = byte_to_chr(response[0]), response[1:]
+        except TypeError:
+            # Ignore the badly formatted response:
+            return None
 
         if byte not in ('-', '+', ':', '$', '*'):
             raise InvalidResponse("Protocol Error: %s, %s" %

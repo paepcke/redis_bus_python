@@ -227,18 +227,6 @@ function SbTesterControl() {
 		
 		// Not a command: ID of a widget:
 			
-		// Grab the server_id from the return:
-		var serverId = respDict['server_id'];
-		// Give the currently selected server radio button
-		// the server id as an ID, and save the server ID:
-		var serverRadioBtn = getCheckedServerRadioBtn();
-		testServers[serverId] = serverRadioBtn;
-		serverRadioBtn.id = serverId;
-		
-		// Check whether this server id matches the one
-		// session storage; if not, update session storage:
-		//   sessionStorage.setItem('serverId', serverId)
-		
 		var parmName;
 		var newVal;
 		var widget;

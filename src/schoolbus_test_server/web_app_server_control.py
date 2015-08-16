@@ -13,7 +13,7 @@ TODO:
             'error', 'success', 'inmsg', 'stats'
     o Make cnt-C work (see http://stackoverflow.com/questions/17101502/how-to-stop-the-tornado-web-server-with-ctrlc)    
     o Prevent echo and bus_syntax from being unsubscribed directly
-    o Remove test_server_id from sbtester.js
+    o In pubsub_listener: have a few temporary statements 
 
 '''
 
@@ -65,7 +65,7 @@ class BusTesterWebController(WebSocketHandler):
     def_msg_len : {<int> | None} 
     '''
 
-    # ----------------------------- Constants ---------------------
+    # ----------------------------- Class-Level Constants ---------------------
     # Number of seconds after which test server
     # instances get killed, because we assume that
     # the browser that created that server is
@@ -82,35 +82,41 @@ class BusTesterWebController(WebSocketHandler):
     LOG_LEVEL_INFO  = 2
     LOG_LEVEL_DEBUG = 3
 
+    # ----------------------------- Class Variables ---------------------
+    
+    instantiation_lock = threading.Lock()
+
     # ----------------------------- Methods ---------------------
     
     def __init__(self, application, request, **kwargs):
-        self.title = "SchoolBus Tester"
-        super(BusTesterWebController, self).__init__(application, request, **kwargs)
         
-        self.loglevel = BusTesterWebController.LOG_LEVEL_DEBUG
-        #self.loglevel = BusTesterWebController.LOG_LEVEL_INFO
-        #self.loglevel = BusTesterWebController.LOG_LEVEL_NONE
-        
-        # Queue to pass requests from the browser, which come in
-        # through the websocket, to the thread that handles them
-        # asynchronously:
-        
-        self.browser_request_queue = Queue.Queue() 
-        
-        # Callback from ioloop to this instance
-        # to check the above queues of messages
-        # from the schoolbus:
-        
-        self.periodic_callback = None
-        
-        # Thread that handles all requests from the browser;
-        # pass self for that thread to refer back to this instance:
-        
-        self.browser_interactor_thread = BrowserInteractorThread(self, self.browser_request_queue)
-        # Make thread die if this parent instance goes away:
-        self.browser_interactor_thread.daemon = True
-        self.browser_interactor_thread.start()
+        with BusTesterWebController.instantiation_lock:
+            self.title = "SchoolBus Tester"
+            super(BusTesterWebController, self).__init__(application, request, **kwargs)
+            
+            self.loglevel = BusTesterWebController.LOG_LEVEL_DEBUG
+            #self.loglevel = BusTesterWebController.LOG_LEVEL_INFO
+            #self.loglevel = BusTesterWebController.LOG_LEVEL_NONE
+            
+            # Queue to pass requests from the browser, which come in
+            # through the websocket, to the thread that handles them
+            # asynchronously:
+            
+            self.browser_request_queue = Queue.Queue() 
+            
+            # Callback from ioloop to this instance
+            # to check the above queues of messages
+            # from the schoolbus:
+            
+            self.periodic_callback = None
+            
+            # Thread that handles all requests from the browser;
+            # pass self for that thread to refer back to this instance:
+            
+            self.browser_interactor_thread = BrowserInteractorThread(self, self.browser_request_queue)
+            # Make thread die if this parent instance goes away:
+            self.browser_interactor_thread.daemon = True
+            self.browser_interactor_thread.start()
         
     def allow_draft76(self):
         '''
@@ -270,7 +276,8 @@ class BrowserInteractorThread(threading.Thread):
         # Stop the checks for incoming messages:
         if self.periodic_callback is not None:
             self.periodic_callback.stop()
-        
+        self.my_server.stop()
+
         self.done = True
         
     def write_to_browser(self, msg):
@@ -361,6 +368,9 @@ class BrowserInteractorThread(threading.Thread):
             
         except ValueError:
             # Was handled in one of the functions called above:
+            #******
+            raise
+            #******
             return response_dict 
         except Exception as e:
             print('Exception in GET: %s' % `e`)
