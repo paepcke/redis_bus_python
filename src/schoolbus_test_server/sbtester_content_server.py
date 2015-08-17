@@ -66,11 +66,14 @@ class UiContentServer(tornado.web.RequestHandler):
         Create the tornado application, making it 
         callable via http://myServer.stanford.edu:<port>/bus/
         '''
-
+        
+        script_dir = os.path.dirname(__file__)
+        html_path    = {'path' : os.path.join(script_dir, 'html'), "default_filename": "index.html"}
+        favicon_path = {'path' : os.path.join(script_dir, 'html')}
+        
         handlers = [
-             (r"/(favicon\.ico)", tornado.web.StaticFileHandler, {'path' : './html'}),
-             (r"/bus/(.*)", tornado.web.StaticFileHandler, 
-                   {'path' : './html',  "default_filename": "index.html"}),
+             (r"/(favicon\.ico)", tornado.web.StaticFileHandler, favicon_path),
+             (r"/bus/(.*)", tornado.web.StaticFileHandler, html_path),
             ]
         application = tornado.web.Application(handlers, debug=False)
         return application
