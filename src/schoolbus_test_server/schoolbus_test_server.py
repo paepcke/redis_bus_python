@@ -40,10 +40,10 @@ SYNTAX_TOPIC = 'bus_syntax'
 STANDARD_MSG_LENGTH = 100
 
 # Standard time interval between messages
-# in continuous-streaming mode: as fast
-# as possible:
+# in continuous-streaming mode: zero would be
+# as fast as possible:
 
-STREAM_INTERVAL = 0
+STREAM_INTERVAL = 1.0 # second
 
 # Max number of incoming message to keep
 # in queue for consumer to take for display
