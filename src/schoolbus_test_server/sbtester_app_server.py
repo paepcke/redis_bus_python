@@ -745,8 +745,12 @@ def is_running(process):
 if __name__ == "__main__":
 
     # Make sure the UI content server is running:
+    #***********
     if not is_running('sbtester_content_server.py'):
-        content_server_pid = Popen(['python', 'src/schoolbus_test_server/sbtester_content_server.py']).pid
+        content_server_pid = Popen(['python', '/home/paepcke/EclipseWorkspaces/redis_bus_python/src/schoolbus_test_server/sbtester_content_server.py']).pid
+        #content_server_pid = Popen(['python', 'src/schoolbus_test_server/sbtester_content_server.py']).pid
+        
+        #***********        
 
     application = makeApp()
     

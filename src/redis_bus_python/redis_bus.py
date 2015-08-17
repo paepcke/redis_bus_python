@@ -142,7 +142,7 @@ class BusAdapter(object):
         calls your handler faster, but while your handler has control, the 
         underlying communication mechanism cannot process other messages.
         
-        If deliveryCallback None, then method _deliverResult() will be called
+        If deliveryCallback is None, then method _deliverResult() will be called
         when a message arrives. That method is intended to be a 
         placeholder with no side effects.
         
@@ -208,7 +208,6 @@ class BusAdapter(object):
         else:
             topic_spec = {pattern_str : delivery_queue if threaded else deliveryCallable}
             self.pub_sub.psubscribe(context, **topic_spec)
-
 
     def unsubscribeFromTopic(self, topicIdentifier=None):
         '''
