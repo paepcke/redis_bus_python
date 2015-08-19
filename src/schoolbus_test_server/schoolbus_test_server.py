@@ -399,7 +399,8 @@ class OnDemandPublisher(threading.Thread):
         if new_one_shot_topic is None or len(new_one_shot_topic) == 0:
             # Set to default oneshot topic:
             new_one_shot_topic = STREAM_TOPIC
-        self._one_shot_topic = new_one_shot_topic
+        else:
+            self._one_shot_topic = new_one_shot_topic
         
     @property
     def one_shot_content(self):

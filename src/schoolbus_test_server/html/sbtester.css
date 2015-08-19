@@ -28,8 +28,8 @@ label { display: table-cell;
 		}
 
 input { display: table-cell;
-		background-color : #cacaca; }
-	  }
+	background-color : #cacaca; 
+      }
 legend {font-weight: bold; }
 
 textarea.content {width: 500px;
@@ -54,6 +54,8 @@ textarea.instats {width  : 40%;
 				 }
 
 input[type=button]#inmsgsClear { background-color : #1580ad; }
+
+input[type=button]#playFrameVisiBtn { margin-bottom : 7px; }
 				 
 .align-center    {display : block;
 				  margin: 1.0em auto;
@@ -75,3 +77,6 @@ input[type=radio].serverSelector  { border: green; }
 label.paddleft	{padding-left: 20px; }
 
 fieldset#servers { display: none;}
+
+iframe.playFrame { display : block; 
+				    margin : 0 auto; }

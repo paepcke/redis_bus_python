@@ -1,5 +1,7 @@
 
-var sbTesterControl;
+//var sbTesterControl;
+sbTesterControl = null;
+
 function SbTesterControl() {
 
 	/* ------------------------------------ Constants ------------------*/
@@ -162,7 +164,7 @@ function SbTesterControl() {
 
 	this.sendOneShot = function() {
 		// Ask server to send a one-shot bus message:
-		sendReq({'oneShot' : 'True'})
+		sendReq({'oneShot' : document.getElementById('oneShotTopic')})
 	}
 
 	this.streamingOnOff = function() {
@@ -177,7 +179,38 @@ function SbTesterControl() {
 		sendReq({'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False'});
 	}
 	
-	var sendReq = function (parmsDict) {
+	
+	this.hideIframe = function() {
+		
+		demoIframe = document.getElementById('iframeFldSet');
+		iframeButton = document.getElementById('playFrameVisiBtn');
+		
+		demoIframe.style.display = 'none';
+		iframeButton.value = 'more...';
+	}
+
+	this.toggleIframe = function() {
+		
+		demoIframe = document.getElementById('iframeFldSet');
+		if (demoIframe.style.display === 'none') {
+			demoIframe.style.display = 'block';
+			iframeButton.value = 'less...';
+		} else {
+			demoIframe.style.display = 'none';
+			iframeButton.value = 'more...';
+		}
+	}
+	
+	this.showIframe = function() {
+
+		demoIframe = document.getElementById('iframeFldSet');
+		iframeButton = document.getElementById('playFrameVisiBtn');
+
+		demoIframe.style.display = 'block';
+		iframeButton.value = 'less...';
+	}
+	
+	var sendReq = function(parmsDict) {
 		// Names of all the server parameters to *change*:
 		var reqKeysToChange =  Object.getOwnPropertyNames(parmsDict);
 		
@@ -194,6 +227,12 @@ function SbTesterControl() {
 
 	    send( JSON.stringify( currReqDict ) );
 	}
+	// The bizarre JavaScript scoping rules need
+	// nested functions sometimes to be var-declared,
+	// and other times to be this-declared. This method
+	// needs both...: 
+	this.sendReq = sendReq;
+	
 	
 	var processServerResponse = function(respDict) {
 		/**
@@ -344,6 +383,48 @@ function SbTesterControl() {
 		return resDict;
 	}
 	
+	this.subscribeToTopic = function(topic) {
+		subscribedTopics = txtArrayToStr(document.getElementById('topicsToRx').innerHTML);
+		topicArr = subscribedTopics.split(/,[ ]*/);
+		if (topicArr.indexOf(topic) === -1) {
+			// Weren't already subscribed to:
+			topicArr.push(topic);
+			topicStr = txtArrayToStr(topicArr);
+			document.getElementById('topicsToRx').innerHTML = topicStr;
+			sendReq({'topicsToRx' : topicStr});
+		}
+	}
+	
+	this.unsubscribeFromTopic = function(topic) {
+		subscribedTopics = txtArrayToStr(document.getElementById('topicsToRx').innerHTML);
+		topicArr = subscribedTopics.split(/,[ ]*/);
+		topicPos = topicArr.indexOf(topic);
+		// Was topic subscribed to?
+		if (topicPos > -1) {
+			// Remove one element from arr at pos topicPos:
+			topicArr.splice(topicPos, 1);
+			topicStr = txtArrayToStr(topicArr);
+			document.getElementById('topicsToRx').innerHTML = topicStr;
+			// Update the server:
+			sendReq({'topicsToRx' : topicStr});
+		}
+	}
+	
+	this.subscribedTo = function(topic) {
+		// With arg, return whether we are
+		// subscribed to that topic; without topic arg,
+		// return all topic we are subscribed to.
+		
+		subscribedTopics = txtArrayToStr(document.getElementById('topicsToRx').innerHTML);
+		topicArr = subscribedTopics.split(/,[ ]*/);
+		
+		if (topic === undefined) {
+			// Return all topics we are subscribed to:
+			return topicArr;
+		}
+		return (topicArr.indexOf(topic) > -1);
+	}
+	
 	var isArray = function(obj) {
 		return Object.prototype.toString.call( obj ) === '[object Array]';
 	}
@@ -369,15 +450,19 @@ function SbTesterControl() {
 		}
 		return res;
 	}
+	
+	this.fillPlayFrame = function(contentUrl) {
+		document.getElementById('playFrame').src = contentUrl;
+	}
 }
 
-var sbTesterControl;
+sbTesterControl = new SbTesterControl();
+
 window.onload = function() {
 
-	sbTesterControl = new SbTesterControl();
 	
 	document.getElementById('sendOneShotBtn').addEventListener('click', sbTesterControl.sendOneShot);
-	
+		
 	document.getElementById('streaming').addEventListener('change', sbTesterControl.streamingOnOff);
 	document.getElementById('echo').addEventListener('change', sbTesterControl.echoOnOff);
 	document.getElementById('chkSyntax').addEventListener('change', sbTesterControl.chkSyntaxOnOff);
@@ -393,6 +478,12 @@ window.onload = function() {
 		document.getElementById("inmsgs").value = '';
 		document.getElementById("instats").value = '';
 		});
+	
+	// Showing and hiding the demo frame:
+	// The demo iFrame setup:
+	document.getElementById('playFrameVisiBtn').addEventListener('click', sbTesterControl.toggleIframe);
+	sbTesterControl.hideIframe();
+	
 	
 	// Have the form fields filled in with current server parameter values:
 	sbTesterControl.initWebsocket();

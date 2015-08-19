@@ -399,8 +399,21 @@ class BrowserInteractorThread(threading.Thread):
         try:
             
             # Are we to fire a one-shot message?
-            if msg_dict.get('oneShot', None) is not None:
-                one_shot_msg = BusMessage(topicName=self.my_server['oneShotTopic'], content=self.my_server['oneShotContent'])
+            one_shot_txt = msg_dict.get('oneShot', None)
+            if one_shot_txt is not None:
+                # If a msg was provided as the value of 
+                # the oneShot request, use it; if an empty
+                # string was given, use the one-shot msg on
+                # record:
+                msg_txt = one_shot_txt if len(one_shot_txt) > 0 else self.my_server['oneShotContent']
+                
+                # Same for destination topic: if supplied, use it, 
+                # else use default:
+                topic_in_dict = msg_dict.get('oneShotTopic', None)
+                msg_topic = topic_in_dict if topic_in_dict is not None else self.my_server['oneShotTopic']
+                  
+                one_shot_msg = BusMessage(topicName=msg_topic,
+                                          content=msg_txt)
                 self.my_server.testBus.publish(one_shot_msg)
                 response_dict['success'] = 'OK'
                 self.write_to_browser(json.dumps(response_dict))
