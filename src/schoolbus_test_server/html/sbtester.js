@@ -164,7 +164,12 @@ function SbTesterControl() {
 
 	this.sendOneShot = function() {
 		// Ask server to send a one-shot bus message:
-		sendReq({'oneShot' : document.getElementById('oneShotTopic')})
+		oneShotTopic = document.getElementById('oneShotTopic').value;
+		oneShotContent = document.getElementById('oneShotContent').value;
+		sendReq({'oneShot' : oneShotContent,
+				 'oneShotTopic' : oneShotTopic
+		        }
+		)
 	}
 
 	this.streamingOnOff = function() {
@@ -485,7 +490,8 @@ window.onload = function() {
 	sbTesterControl.hideIframe();
 	
 	
-	// Have the form fields filled in with current server parameter values:
+	// Open websocket to originating server:
 	sbTesterControl.initWebsocket();
-	window.setTimeout(function () {sbTesterControl.submit();}, 100);
+    // Have the form fields filled in with current server parameter values:
+	window.setTimeout(function () {sbTesterControl.submit();}, 300);
 }
