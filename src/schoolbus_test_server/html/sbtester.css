@@ -1,6 +1,8 @@
 
 body { background-color : #b0c4de}
 
+h1.schoolscope { text-align : center; }
+
 table.inputFields {
     border-collapse: separate;
     border-spacing: 10px 5px;

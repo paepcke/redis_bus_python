@@ -61,7 +61,8 @@ class BusMessage(object):
                     self._id = contentDict._createUuid()
                 self._time = contentDict.get('time', None)
                 if self._time is None:
-                    contentDict._int(time.time) * 1000
+                    #contentDict._int(time.time) * 1000
+                    contentDict._int(time.time)
         else:
             self.init_defaults(content)
             
