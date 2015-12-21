@@ -16,7 +16,8 @@ BUS_TESTER_WEBSOCKET_PORT = 8000
 
 class UiContentServer(tornado.web.RequestHandler):
     '''
-    classdocs
+    Simple Tornado static Web server that serves the
+    UI of the SchoolScope. It is started by sbtester_app_server.py.
     '''
 
 
@@ -77,6 +78,24 @@ class UiContentServer(tornado.web.RequestHandler):
             ]
         application = tornado.web.Application(handlers, debug=False)
         return application
+
+# Note: function not method:
+def sig_handler(sig, frame):
+    # Schedule call to shutdown, so that all ioloop
+    # related calls are from main thread: 
+    tornado.ioloop.IOLoop.instance().add_callback(shutdown) 
+
+# Note: function not method:
+def shutdown():
+    '''
+    Carefully shut everything down.
+    '''
+
+    io_loop = tornado.ioloop.IOLoop.instance()
+    # Schedule the shutdown for after all pending
+    # requests have been services:
+    io_loop.add_callback(io_loop.stop)
+    
     
 if __name__ == '__main__':
 
@@ -103,10 +122,12 @@ if __name__ == '__main__':
     start_msg = 'Starting SchoolBus Web UI server on %s://%s:%d/bus/' % \
         (protocol_spec, socket.gethostname(), BUS_TESTER_WEBSOCKET_PORT)
 
-    print('Starting SchoolBus Web UI server on port %s' % start_msg)
+    print(start_msg)
     try:
         ioloop = tornado.ioloop.IOLoop.instance()
         ioloop.start()
+    except KeyboardInterrupt:
+        shutdown()
     except Exception as e:
         print('Bombed out of tornado IO loop: %s' % `e`)
     

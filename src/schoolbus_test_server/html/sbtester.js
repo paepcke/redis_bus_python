@@ -1,4 +1,13 @@
 
+
+/*
+ * Presents a control surface, "SchoolScope" in the calling browser that allows
+ * sending and receiving of test messages to/from a SchoolBus server.
+ * The tests rely on a server that is part of the redis_bus_python package:
+ * It is located in <projRoot>/src/schoolbus_test_server/sbtester_app_server.py.
+ * Start it using the start script in <projRoot>/scripts.
+ */
+
 //var sbTesterControl;
 sbTesterControl = null;
 

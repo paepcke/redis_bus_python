@@ -19,17 +19,19 @@ import functools
 import json
 import os
 import re
+import signal
 import socket
 from subprocess import Popen
 import subprocess
 import sys
 import threading
 import time
+import traceback
+
 import tornado.httpserver
 import tornado.ioloop
 import tornado.web
 from tornado.websocket import WebSocketHandler, WebSocketClosedError
-import traceback
 
 from redis_bus_python.bus_message import BusMessage
 from redis_bus_python.redis_lib.exceptions import TimeoutError
@@ -84,6 +86,10 @@ class BusTesterWebController(WebSocketHandler):
     # ----------------------------- Class Variables ---------------------
     
     instantiation_lock = threading.Lock()
+
+    # PID of subprocess server that serves the javascript 
+    # for the SchoolScope: 
+    content_server_pid = None
 
     # ----------------------------- Methods ---------------------
     
@@ -698,7 +704,10 @@ def makeApp():
 # Note: function not method:
 def sig_handler(sig, frame):
     # Schedule call to shutdown, so that all ioloop
-    # related calls are from main thread: 
+    # related calls are from main thread:
+    #****** 
+    print('sig handler called')
+    #****** 
     tornado.ioloop.IOLoop.instance().add_callback(shutdown) 
 
 # Note: function not method:
@@ -706,39 +715,18 @@ def shutdown():
     '''
     Carefully shut everything down.
     '''
-    
-    # Time for ioloop to shut everything down:
-    MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = 3
 
-    for server in BusTesterWebController.test_servers:
-        print("Stopping %s" % str(server))
-        server.stop()
-        server.join(5)
-        if server.is_alive():
-            raise TimeoutError("Unable to stop BusTesterWebController thread '%s'." % server.name)
-            raise TimeoutError('Unable to stop BusTesterWebController thread.')
-        
+    #****** 
+    print('shutdown called')
+    #****** 
 
-    global http_server
-    print("Stopping HTTP server...")
-    http_server.stop()
+    # Shut down the SchoolScope content server:
+    os.killpg(BusTesterWebController.content_server_pid, signal.SIGTERM)
     
-    print('Shutdown in %s seconds ...' % MAX_WAIT_SECONDS_BEFORE_SHUTDOWN)
     io_loop = tornado.ioloop.IOLoop.instance()
-
-    deadline = time.time() + MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
-
-    def stop_loop():
-        now = time.time()
-        if now < deadline and (io_loop._callbacks or io_loop._timeouts):
-            io_loop.add_timeout(now + 1, stop_loop)
-        else:
-            io_loop.stop()
-            print('Shutdown complete.')
-    stop_loop()    
-    
-
-#****signal.signal(signal.SIGINT, sig_handler)
+    # Schedule the shutdown for after all pending
+    # requests have been services:
+    io_loop.add_callback(io_loop.stop)
 
 def is_running(process):
     '''
@@ -758,12 +746,20 @@ def is_running(process):
 if __name__ == "__main__":
 
     # Make sure the UI content server is running:
-    #***********
     if not is_running('sbtester_content_server.py'):
-        content_server_pid = Popen(['python', '/home/paepcke/EclipseWorkspaces/redis_bus_python/src/schoolbus_test_server/sbtester_content_server.py']).pid
-        #content_server_pid = Popen(['python', 'src/schoolbus_test_server/sbtester_content_server.py']).pid
-        
-        #***********        
+        this_script_dir = os.path.dirname(__file__)
+        # Start the content server, which serves the SchoolScope's
+        # Web UI javascript. The "preexec_fn=os.setsid" makes the
+        # server share a session ID with this app server. This move
+        # makes it easier to terminate the subprocess by sending it
+        # a SIGTERM:
+        BusTesterWebController.content_server_pid =\
+            Popen(['python', os.path.join(this_script_dir, 'sbtester_content_server.py')],
+                  preexec_fn=os.setsid).pid 
+        print('SchoolBus Web UI server running as pid %s' % str(BusTesterWebController.content_server_pid))
+
+    # Catch SIGTERM (cnt-C):
+    signal.signal(signal.SIGTERM, sig_handler)
 
     application = makeApp()
     
@@ -794,7 +790,7 @@ if __name__ == "__main__":
     else:
         protocol_spec = 'ws'
 
-    start_msg = 'Starting SchoolBus Web UI websocket server on %s://%s:%d/bus/' % \
+    start_msg = 'Starting SchoolBus websocket server on %s://%s:%d/bus/' % \
         (protocol_spec, socket.gethostname(), BUS_TESTER_WEBSOCKET_PORT)
 
     print(start_msg)
@@ -802,6 +798,8 @@ if __name__ == "__main__":
     try:
         ioloop = tornado.ioloop.IOLoop.instance()
         ioloop.start()
+    except KeyboardInterrupt:
+        shutdown()
     except Exception as e:
         print('Bombed out of tornado IO loop: %s' % `e`)
     

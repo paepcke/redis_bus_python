@@ -43,6 +43,7 @@ class BusMessage(object):
         :param moreArgsDict: optional dictionary of additional key/value pairs.
             Instance variables will be created for them.
         :type moreArgsDict: {String : <any>}
+        :raise ValueError if illegal format of parameters.
         '''
         if isJsonContent:
             # See whether this is a real BusMessage, with 
@@ -58,11 +59,17 @@ class BusMessage(object):
                 self.content = contentDict.get('content', None)
                 self._id = contentDict.get('id', None)
                 if self._id is None:
-                    self._id = contentDict._createUuid()
+                    self._id = self.createUuid()
                 self._time = contentDict.get('time', None)
                 if self._time is None:
                     #contentDict._int(time.time) * 1000
-                    contentDict._int(time.time)
+                    self._time = time.time()
+                else:
+                    # Ensure the time is legal:
+                    try:
+                        datetime.datetime.fromtimestamp(self._time)
+                    except ValueError:
+                        raise ValueError("Bus message creation with illegal time constant: '%s'" % str(self._time))
         else:
             self.init_defaults(content)
             

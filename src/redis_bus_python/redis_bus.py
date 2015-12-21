@@ -107,7 +107,7 @@ class BusAdapter(object):
         # Create a JSON struct (to change time to ISO format
         # use datetime.now().isoformat()):
         msgDict = dict(zip(['id', 'time', 'content'],
-                           [msgUuid, int(time.time()*1000), msg]))
+                           [msgUuid, int(time.time()), msg]))
 
         # If synchronous operation requested, wait for response:
         if sync:
