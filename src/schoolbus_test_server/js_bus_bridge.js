@@ -12,13 +12,15 @@
  * messages, a function to call when errors occur,
  * and an optional third argument with the bus bridge
  * server's fully qualified domain name. It defaults
- * to localhost. 
+ * to localhost.
  */
 
 function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 
 	/* ------------------------------------ Constants ------------------*/
 
+	var that = this
+	
 	var msgCallback = msgCallback;
 	var errCallback = errCallback;
 	if (typeof busBridgeHost === 'undefined') {
@@ -27,6 +29,7 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 		originHost = busBridgeHost;
 	}
 
+	var USE_SSL = false;
 	var controllerWebsocketPort  = 4363;
 	// URL part after the domain and port.
 	// Server expects websocket connections there:
@@ -47,14 +50,9 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 	/* ------------------------------------ Instance Vars ------------------*/
 
 	var keepAliveTimer    = null;
-
-	// Dict mapping UUIDs from test server to
-	// server-selection radio button widgets:
-	var testServers = {}
-	
 	var connectAttemptTime = null;
 	
-	var ws = null;
+	that.ws = null;
 	
 	/* ------------------------------------ Methods ------------------------*/
 	
@@ -85,12 +83,12 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 		ws.send(req);
 	}
 
-	this.initWebsocket = function() {
-		//*********
-		//ws = new WebSocket("ws://" + originHost + ':' + controllerWebsocketPort + originDir);
-		ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
-
-		//*********
+	var initWebsocket = function() {
+		if (USE_SSL) {
+			ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
+		} else {
+			ws = new WebSocket("ws://" + originHost + ':' + controllerWebsocketPort + originDir);
+		}
 		
 		ws.onopen = function() {
 		    keepAliveTimer = window.setInterval(function() {sendKeepAlive()}, keepAliveInterval);
@@ -100,7 +98,7 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 			if (keepAliveTimer !== null) {
 		    	clearInterval(keepAliveTimer);
 			}
-		    err_callback("The browser or server closed the connection, or network trouble; please reload the page to resume.");
+		    errCallback("The browser or server closed the connection, or network trouble; please reload the page to resume.");
 		}
 	
 		ws.onerror = function(evt) {
@@ -112,13 +110,13 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 			try {
 				if (Object.prototype.toString.call(evt.currentTarget) === "[object WebSocket]" &&
 						evt.currentTarget.readyState === WEBSOCKET_CLOSED_STATE) {
-					err_callback("The SchoolBus test server seems to be unreachable.")
+					errCallback("The SchoolBus test server seems to be unreachable.")
 				} else {
-					err_callback("The browser has detected an error while communicating with the data server: " + evt.data);
+					errCallback("The browser has detected an error while communicating with the data server: " + evt.data);
 				}
 			
 			} catch(err) {
-				err_callback("The browser has detected an error while communicating with the data server: " + evt.data);
+				errCallback("The browser has detected an error while communicating with the data server: " + evt.data);
 			} 
 		}
 
@@ -129,28 +127,11 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 			//var oneLineData = evt.data.replace(/(\r\n|\n|\r)/gm," ");
 			argsObj = JSON.parse(evt.data);
 		    } catch(err) {
-		    	err_callback('Error report from server (' + evt.data + '): ' + err );
+		    	errCallback('Error report from server (' + evt.data + '): ' + err );
 			return
 		    }
 		    processServerResponse(argsObj);
 		}
-		
-	}
-	
-	this.submit = function() {
-		var parmsDict = {'strLen' : document.getElementById('strLen').value,
-					     'oneShotTopic' : document.getElementById('oneShotTopic').value,
-					     'oneShotContent' : document.getElementById('oneShotContent').value,
-					     'streamTopic' : document.getElementById('streamTopic').value,
-					     'streamContent' : document.getElementById('streamContent').value,
-					     'streamInterval' : document.getElementById('streamInterval').value,
-					     'syntaxTopic' : document.getElementById('syntaxTopic').value,
-					     'topicsToRx' : document.getElementById('topicsToRx').value,
-					     'streaming' : document.getElementById('streaming').checked ? 'True' : 'False',
-					     'echo' : document.getElementById('echo').checked ? 'True' : 'False',
-					     'chkSyntax' : document.getElementById('chkSyntax').checked ? 'True' : 'False',
-		}
-		sendReq(parmsDict);
 	}
 	
 	this.wsReady = function() {
@@ -164,14 +145,14 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 		return ws;
 	}
 
-	var send = function(msg) {
+	var sendReq = function(msgDict) {
 		if (ws === null) {
 			initWebsocket();
 		}
 		if (ws.readyState != WEBSOCKET_READY_STATE) {
 			ws.onreadystatechange = function(msg) {
 				if (ws.readyState == WEBSOCKET_READY_STATE) {
-					ws.send(msg);
+					ws.send(JSON.stringify(msgDict));
 				} else {
 					alert('Could not connect to server; timed out.');
 				}
@@ -183,46 +164,61 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 	}
 	
 	this.subscribeToTopic = function(topic) {
-		subscribedTopics = txtArrayToStr(document.getElementById('topicsToRx').innerHTML);
-		topicArr = subscribedTopics.split(/,[ ]*/);
-		if (topicArr.indexOf(topic) === -1) {
-			// Weren't already subscribed to:
-			topicArr.push(topic);
-			topicStr = txtArrayToStr(topicArr);
-			document.getElementById('topicsToRx').innerHTML = topicStr;
-			sendReq({'topicsToRx' : topicStr});
-		}
+		sendReq({"cmd" : "subscribe", "topic" : topic});
 	}
 	
 	this.unsubscribeFromTopic = function(topic) {
-		subscribedTopics = txtArrayToStr(document.getElementById('topicsToRx').innerHTML);
-		topicArr = subscribedTopics.split(/,[ ]*/);
-		topicPos = topicArr.indexOf(topic);
-		// Was topic subscribed to?
-		if (topicPos > -1) {
-			// Remove one element from arr at pos topicPos:
-			topicArr.splice(topicPos, 1);
-			topicStr = txtArrayToStr(topicArr);
-			document.getElementById('topicsToRx').innerHTML = topicStr;
-			// Update the server:
-			sendReq({'topicsToRx' : topicStr});
-		}
+		sendReq({"cmd" : "unsubscribe", 'topic' : topic});
 	}
 	
-	this.subscribedTo = function(topic) {
-		// With arg, return whether we are
-		// subscribed to that topic; without topic arg,
-		// return all topic we are subscribed to.
-		
-		subscribedTopics = txtArrayToStr(document.getElementById('topicsToRx').innerHTML);
-		topicArr = subscribedTopics.split(/,[ ]*/);
-		
-		if (topic === undefined) {
-			// Return all topics we are subscribed to:
-			return topicArr;
-		}
-		return (topicArr.indexOf(topic) > -1);
+	this.subscribedTo = function() {
+		// Request list of all topics we are subscribed to.
+		// Result will arrive asynchronously.
+		sendReq({"cmd" : "subscribed_to"})
 	}
+	
+	this.publish = function(str, topic) {
+		sendReq({"cmd" : "publish", "topic" : topic});
+	}
+	
+	var processServerResponse = function(argsObj) {
+		/*
+		 * Called when a bus message arrives from the bridge,
+		 * or when the bridge responds to an earlier request
+		 * for the subscribed-to topics. The difference is
+		 * detected by the value of the "resp" key. If it is
+		 * an array, it's a list of subscribed-to topics.
+		 * Else it's a msg or error string:
+		 * 
+		 *      {"resp": ["topic1", "topic2", ...]}
+		 * vs:
+		 *      {"resp" : "theMessageContent", 
+         *                "topic" : "theTopic",
+         *                "time" : "isoSendTimeStr"}
+         *                
+         * vs:  {"error" : "errMsg"}
+		 */
+		var resp = argsObj.resp
+		if (isArray(resp)) {
+			var topics = txtArrayToStr(resp);
+			document.getElementById('topics').innerHtml = topics;
+			return;
+		}
+		// Error msg?:
+		if (typeof argsObj.resp !== 'undefined') {
+			// Regular message arrived:
+			str = argsObj.time + ' (' + argsObj.topic + "): " + argsObj.resp + '\r\n';
+			msgCallback(str);
+			return;
+		}
+		if (typeof argsObj.error !== 'undefined') {
+			// Error message arrived:
+			str = "Error: " + argsObj.error;
+			errCallback(str);
+			return;
+		}
+		// If we get here the server sent an unknown response
+	}	
 	
 	var isArray = function(obj) {
 		return Object.prototype.toString.call( obj ) === '[object Array]';

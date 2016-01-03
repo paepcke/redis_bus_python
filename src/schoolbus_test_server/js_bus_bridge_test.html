@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>Testing JavaScript-to-JSSchoolbusBridge</title>
+		
+		<style>
+	       form  { display: table;      }
+	       p     { display: table-row;  }
+	       label { display: table-cell; }
+	       input { display: table-cell; }
+	       .wide { width  : 200px; }
+	       .subscriptions { height : 200px;
+	       				    width  : 200px; }
+		</style>
+		
+		
+		<script type="text/javascript" charset="utf-8" src="js_bus_bridge.js"></script>
+		<script>
+		var msgCallback = function(msgStr) {
+			alert(msgStr);
+		}
+		var errCallback = alert;
+		var interactor = BusInteractor(msgCallback, errCallback)
+		
+		var subscribe = function(topic) {
+			interactor.subscribeToTopic(topic);
+		}
+		var unsubscribe = function(topic) {
+			interactor.unsubscribeFromTopic(topic);
+		}
+		var publish = function(txt, topic) {
+			interactor.publish(txt, topic);
+		}
+		
+		var onSubscribe = function() {
+			topic = document.getElementById('topic').value
+			subscribe(topic);
+		}
+		
+		</script>
+	</head>
+	
+	<form>
+		<p>
+			<label for="topic">Topic: </label>
+			<input type="text" class="wide" id="topic"> <button id="subscribe" onclick=onSubscribe()>Subscribe</button> 
+			  							   <button id="unsubscribe">Unsubscribe</button>
+		</p>
+		<p>
+			<label for="msg">Message to publish: </label>
+			<input type="text" class="wide" id="msg"> <button id="send">Publish</button>
+		</p>
+		<p>
+			<label for="topics">Subscriptions: </label>
+			<input type="textarea" class="subscriptions" id="topics">
+		</p>
+	</form>
+	
+	<script>
+	var interactor = new BusInteractor(msgCallback, errCallback);	
+	</script>
+</html>

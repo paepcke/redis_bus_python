@@ -5,7 +5,7 @@ Created on Jan 2, 2016
 '''
 #!/usr/bin/env python
 '''
-Created on Aug 1, 2015
+Created on January 1, 2015
 
 @author: paepcke
 
@@ -15,7 +15,30 @@ are implemented: (un)subscribe, publish. The
 generic counterpart is the JavaScript bus_interactor.js.
 It knows to talk to this bridge.
 
-Protocol:
+Runs two threads: the main thread listens for connections
+from a browser via websocket. For each such standing connection
+tornado creates an instance of JsBusBridge. Each instance
+in turn creates a BrowserInteractorThread instance. Each main thread's
+JsBusBridge instance maintains a queue between it and its 
+BrowserInteractorThread instance. Websocket messages arriving
+from the browser are placed in that queue.
+
+The BrowserInteractorThread instances are responsible for
+dealing with the SchoolBus. The queue from the main thread
+will feed the thread messages from the browser (see associated
+protocol below). This is how browsers subscribe, unsubscribe,
+publish, and receive lists of subscribed-to topics.
+
+On receiving a subscribe command from the browser, the 
+BrowserInteractorThread instance subscribes to the SchoolBus on
+the browser's behalf. Messages incoming from the bus are 
+queued in a queue internal to the BrowserInteractorThread instance.
+The queue is processed via a periodic callback scheduled via
+the ioloop. This way both, messages from the browser, and messages
+from the bus are buffered in a queue to handle high speeds
+(hopefully). 
+
+Protocol on websocket between this bridge and the browser
    - All messages between browser and this bridge are JSON formatted.
    - Subscribe:         {"cmd" : "subscribe", "topic" : "myTopic"}
         -> no response
@@ -24,10 +47,12 @@ Protocol:
    - Publish:           {"cmd" : "publish", "msg" : "msgTxt", "topic" : "myTopic} 
         -> no response
    - Subscription list: {"cmd" : "subscribed_to"}
-        -> response:    {"resp": ["topic1", "topic2", ...]}
+        -> response:    {"resp": "topics",
+                         "content" : ["topic1", "topic2", ...]}
    
    - Message delivery: when messages arrive from the bus the browser
-       is called with   {"resp" : "theMessageContent", 
+       is called with   {"resp" : "msg",
+                         "content" : "theMessageContent",
                          "topic" : "theTopic",
                          "time" : "isoSendTimeStr"} 
    - Errors: errors flow from the bridge to the browser. Error msgs
@@ -42,10 +67,8 @@ import datetime
 import functools
 import json
 import os
-import re
 import signal
 import socket
-import subprocess
 import sys
 import threading
 
@@ -65,6 +88,7 @@ sys.path.append(os.path.dirname(__file__))
 JS_BRIDGE_WEBSOCKET_PORT = 4363
 
 DO_BLOCK = True
+DONT_BLOCK = False
 
 # Time to wait in join() for child threads to 
 # terminate:
@@ -162,7 +186,7 @@ class JsBusBridge(WebSocketHandler):
             msg_dict = self.byteify(json.loads(msg))
         except ValueError:
             # Bad JSON:
-            self.return_error({}, "Message from client not good JSON: '%s'" % str(msg))
+            self.return_error("Message from client not good JSON: '%s'" % str(msg))
             return
         
         # Have the service thread deal with the details:
@@ -171,7 +195,7 @@ class JsBusBridge(WebSocketHandler):
         return
     
     def on_close(self):
-        self.logDebug('Websocket was closed; shutting down school test server...')
+        self.logDebug('Websocket was closed; shutting down JS-SchoolBus bridge server...')
         
         self.browser_interactor_thread.stop()
         self.browser_interactor_thread.join(JOIN_WAIT_TIME)
@@ -179,7 +203,7 @@ class JsBusBridge(WebSocketHandler):
             raise TimeoutError("Unable to stop browser interactor thread '%s'." % self.browser_interactor_thread.name)
         
         self.browser_interactor_thread = None
-        self.logDebug('School test server is shut down...')
+        self.logDebug('JS-SchoolBus bridge server is shut down...')
         #**********
         #threadStacktraces()
         #threading.enumerate()
@@ -199,6 +223,19 @@ class JsBusBridge(WebSocketHandler):
         except WebSocketClosedError:
             self.logErr("Attempt to write to socket after it was closed.")
     
+    def return_error(self, error_str):
+        '''
+        Creates {'error' : <error_str>} and causes
+        that dict to be  to be written to the browser 
+        via the standing websocket.
+        
+        :param error_str: error message
+        :type error_str: str
+        '''
+        response_dict = {"resp" : "error",
+                         "content" : error_str}
+        self.write_message(json.dumps(response_dict))
+
     def byteify(self, the_input):
         '''
         Turn unicode buried in data structures
@@ -262,15 +299,16 @@ class JsBusBridge(WebSocketHandler):
         return (os.path.join(sslDir, certFileName),
                 os.path.join(sslDir, privateKeyFileName))
 
-            
+# =======================================================================================================            
 class BrowserInteractorThread(threading.Thread):
     '''
     Thread responsible for servicing requests coming in from
-    the Web UI. Requests are fed through to this thread via 
-    a queue that is passed in to __init__()
+    the Web UI, and from the Schoolbus. Requests from the browser
+    are fed to this thread via a queue that is passed in to __init__()
     
-    Return strings are delivered to the main thread with scheduling
-    a Tornado callback to _write_to_browser().
+    Strings to send to the browser are delivered to the main thread 
+    via scheduling a Tornado callback to the main-thread _write_to_browser()
+    method.
     '''
 
     # How often to check whether someone called stop()
@@ -281,8 +319,8 @@ class BrowserInteractorThread(threading.Thread):
         '''
         Start service of requests from the Web UI.
         
-        :param websocket_comm_obj: instance of BusTesterWebController in the main thread.
-        :type websocket_comm_obj: BusTesterWebController
+        :param websocket_comm_obj: instance of JsBusBridge in the main thread.
+        :type websocket_comm_obj: JsBusBridge
         :param browser_request_queue: message queue from which requests from the Web UI
             are passed into this instance.
         :type browser_request_queue: Queue.Queue
@@ -291,32 +329,33 @@ class BrowserInteractorThread(threading.Thread):
         
         self.websocket_comm_obj = websocket_comm_obj
         self.browser_request_queue = browser_request_queue
+        # Ptr to the SchoolBus adapter instance.
         self.bus = JsBusBridge.bus
 
-        # Queues through which other threads provide
-        # messages that arrive from the SchoolBus to this instance
-        # for transfer over the websocket to the browser:
+        # Queue in which to hold incoming SchoolBus messages 
+        # until they are processed by a periodic callback
+        # from the ioloop. 'Processed' means sent back to
+        # the browser.
         
-        self.bus_msg_queue = None
-        self.bus_stats_queue = None
+        self.bus_msg_queue = Queue.Queue()
         
         # Callback for bus adapter to deliver an incoming bus
-        # msg to this thread:
+        # msg to this thread; on_bus_message() will just queue
+        # the message:
         self.bus_msg_delivery = functools.partial(self.on_bus_message)
         
         # Callback in parent that safely writes to websocket:
         self._write_to_browser_callback = functools.partial(self.websocket_comm_obj._write_to_browser)
         
-        # Create a periodic callback that checks the in-msg and in-stats
-        # queues for msgs/stats to forward to the browser. The
-        # instance() method enforces a singleton ioloop instance:
+        # Create a periodic callback that checks the in-msg
+        # queue for bus msgs that arrived and need to be 
+        # forwarded to the browser.
         
-        self.periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.on_bus_message),
+        self.periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.service_bus_inmsg_queue),
                                                                  JsBusBridge.PERIODIC_IN_MSG_CHECK
-
+ 
                                                                  )
         self.done = False
-        self.periodic_callback.start()
         
     def stop(self):
         '''
@@ -329,12 +368,10 @@ class BrowserInteractorThread(threading.Thread):
             self.periodic_callback.stop()
             
         self.done = True
-        # Immediately unblock the queue
+        # Immediately unblock the queue of requests
+        # from the browser:
         self.websocket_comm_obj.browser_request_queue.put_nowait('\0')
         
-        if self.server_running():
-            self.my_server.stop()
-
     def write_to_browser(self, msg):
         '''
         Send a message to the browser on the other end
@@ -364,16 +401,9 @@ class BrowserInteractorThread(threading.Thread):
             except Queue.Empty:
                 continue 
             
-            cmd = msg_dict.get('cmd', None)
-            if cmd is None:
-                self.return_error("Protocol error: no 'cmd' field.")
-                continue
-            if cmd not in JsBusBridge.IMPLEMENTED_CMDS:
-                self.return_error("Not implemented: %s" % cmd)
-                continue
-    
             # Workhorse for servicing the requests:
-            response_dict = self.service_browser_request(msg_dict) #@UnusedVariable
+            response_dict = self.service_browser_request(msg_dict)
+            # If a response to the browser is to be delivered, do that:
             if response_dict is not None and len(response_dict) > 0:
                 self.write_to_browser(json.dumps(response_dict))
             continue
@@ -382,14 +412,11 @@ class BrowserInteractorThread(threading.Thread):
     def service_browser_request(self, msg_dict):
         '''
         Given a dict of request key/values from the Web UI,
-        set parameters in the test instrument, or return the
-        current parameter values, if the values from the UI
-        are empty strings. The following example would
-        set the topic to which 'one-shot' messages are sent
-        to 'myTopic,' and the content of one-shots to a
-        string. Given the empty string for strLen, the 
-        return dict will contain the current instrument
-        length of random strings:
+        execute the appropriate operations on the SchoolBus:
+        (un)subscribe, publish, etc.
+        
+        The following example would subscribe this thread to
+        accept myTopic messages:
         
         Example:  { 'cmd'     : 'subscribe',
                     'topic'   : 'myTopic',
@@ -398,10 +425,7 @@ class BrowserInteractorThread(threading.Thread):
         browser. Else returns a dict to be sent JSON encoded.
         If error occurs, schedules error message to be sent to
         browser, and returns None.
-        
-        Assumes that a cmd field is present, and that it contains
-        one of the implemented cmds.
-        
+                
         :param msg_dict: parameter names and values
         :type msg_dict: {str : str}
         :returns None or dict to send back to browser.
@@ -409,7 +433,10 @@ class BrowserInteractorThread(threading.Thread):
         '''
         try:
             
-            cmd = msg_dict['cmd']
+            cmd = msg_dict.get('cmd', None)
+            if cmd is None:
+                self.return_error("Protocol error: message does not contain a 'cmd' field: %" % str(msg_dict))
+                return None
             if cmd == 'subscribe':
                 topic = msg_dict.get('topic', None)
                 if topic is None:
@@ -438,8 +465,9 @@ class BrowserInteractorThread(threading.Thread):
                 return None
             elif cmd == 'subscribed_to':
                 subscription_arr = self.bus.mySubscriptions()
-                return {"resp" : subscription_arr}
+                return {"resp" : "topics", "content" : subscription_arr}
             else:
+                self.return_error("Not implemented: %s" % cmd)
                 return None
         except Exception as e:
             err_msg = "Error while interacting with bus: %s" % `e`
@@ -448,23 +476,41 @@ class BrowserInteractorThread(threading.Thread):
 
     def on_bus_message(self, msg):
         '''
-        Called when a message to which we are subscribed
-        comes in. These are msgs on topics explicitly subscribed
-        to via the Web UI.
+        Called asynchronously from bus adapter when a bus msg arrives.
+        Just queue the message; it will be picked up by
+        a periodic ioloop callback to service_bus_inmsg_queue().
         
-        :param msg: message to write to browser.
-        :type msgs: {string | None}
+        :param msg: message from SchoolBus
+        :type msg: BusMessage
         '''
-        try:
-            self.write_to_browser({"resp" : msg.content, 
-                                   "topic" : msg.topicName,
-                                   "time" : msg.isoTime
-                                   })
-        except Exception as e:
-            error_msg = "Error during in-msg forwarding: '%s'" % `e`
-            self.logErr(error_msg)
-            self.return_error(error_msg)
-            return
+        self.bus_msg_queue.put_nowait(msg)
+        
+    
+    def service_bus_inmsg_queue(self):
+        '''
+        Called periodically from ioloop. Checks whether bus
+        messages have arrived from the SchoolBus, and forwards
+        them to the browser. These are only msgs on topics 
+        explicitly subscribed to via the Web UI.
+        '''
+        
+        while not self.bus_msg_queue.empty():
+            try:
+                bus_msg = self.bus_msg_queue.get(DONT_BLOCK)
+            except Queue.Empty:
+                return
+            
+            try:
+                self.write_to_browser({"resp" : "msg",
+                                       "content" : bus_msg.content, 
+                                       "topic" : bus_msg.topicName,
+                                       "time" : bus_msg.isoTime
+                                       })
+            except Exception as e:
+                error_msg = "Error during in-msg forwarding: '%s'" % `e`
+                self.logErr(error_msg)
+                self.return_error(error_msg)
+                return
         
     def return_error(self, error_str):
         '''
@@ -475,7 +521,8 @@ class BrowserInteractorThread(threading.Thread):
         :param error_str: error message
         :type error_str: str
         '''
-        response_dict = {"error" : error_str}
+        response_dict = {"resp" : "error",
+                         "content" : error_str}
         self.write_to_browser(json.dumps(response_dict))
 
     def ensure_lower_non_array(self, val):
@@ -506,10 +553,10 @@ class BrowserInteractorThread(threading.Thread):
 def makeApp():
     '''
     Create the tornado application, making it 
-    callable via https://myServer.stanford.edu:<port>/schoolbus
+    callable via https://myServer.stanford.edu:<port>/jsbusbridge
     '''
     handlers = [
-         (r"/schoolbus", JsBusBridge)
+         (r"/jsbusbridge", JsBusBridge)
          ]
 
     application = tornado.web.Application(handlers , debug=False)
@@ -537,20 +584,6 @@ def shutdown():
     # requests have been services:
     io_loop.add_callback(io_loop.stop)
 
-def is_running(process):
-    '''
-    Return true if Linux process with given name is
-    running.
-    
-    :param process: process name as appears in ps -axw
-    :type process: string
-    '''
-    search_proc = subprocess.Popen(['ps', 'axw'],stdout=subprocess.PIPE)
-    for ps_line in search_proc.stdout:
-        if re.search(process, ps_line):
-            return True 
-    return False
-
 
 if __name__ == "__main__":
     
@@ -574,24 +607,20 @@ if __name__ == "__main__":
                    'keyfile'  : keyFile}
 
     # For SSL:
-    ssl_used = True
-    http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
-    application.listen(JS_BRIDGE_WEBSOCKET_PORT, ssl_options=sslArgsDict)
-    
-    
-    # For non-ssl:
-    #ssl_used = False
-    #http_server = tornado.httpserver.HTTPServer(application)
-    #http_server.listen(BUS_TESTER_WEBSOCKET_PORT)
-
+    ssl_used = False
     if ssl_used:
         protocol_spec = 'wss'
+        http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
+        application.listen(JS_BRIDGE_WEBSOCKET_PORT, ssl_options=sslArgsDict)
     else:
         protocol_spec = 'ws'
+        http_server = tornado.httpserver.HTTPServer(application)
+        #*****http_server.listen(JS_BRIDGE_WEBSOCKET_PORT)
+        application.listen(JS_BRIDGE_WEBSOCKET_PORT)
 
     JsBusBridge.bus = BusAdapter(host=bus_server)
 
-    start_msg = 'Starting JavaScript/SchoolBus bridge server on %s://%s:%d/schoolbus/' % \
+    start_msg = 'Starting JavaScript/SchoolBus bridge server on %s://%s:%d/jsbusbridge/' % \
         (protocol_spec, socket.gethostname(), JS_BRIDGE_WEBSOCKET_PORT)
 
     print(start_msg)
