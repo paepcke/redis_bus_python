@@ -7,6 +7,9 @@ Created on Jan 2, 2016
 '''
 Created on January 1, 2015
 
+TODO: 
+  o on_close: have interactor thread unsubscribe from all
+
 @author: paepcke
 
 Generic bridge connecting JavaScript-running
@@ -149,7 +152,7 @@ class JsBusBridge(WebSocketHandler):
             
             self.periodic_callback = None
             
-            # Thread that handles all requests from the browser;
+            # Thread that handles all requests from this browser;
             # pass self for that thread to refer back to this instance:
             
             self.browser_interactor_thread = BrowserInteractorThread(self, self.browser_request_queue)
@@ -195,7 +198,7 @@ class JsBusBridge(WebSocketHandler):
         return
     
     def on_close(self):
-        self.logDebug('Websocket was closed; shutting down JS-SchoolBus bridge server...')
+        self.logDebug('Websocket was closed; shutting down this JS-SchoolBus bridge connection...')
         
         self.browser_interactor_thread.stop()
         self.browser_interactor_thread.join(JOIN_WAIT_TIME)
@@ -457,6 +460,11 @@ class BrowserInteractorThread(threading.Thread):
                 return None
             elif cmd == 'subscribed_to':
                 subscription_arr = self.bus.mySubscriptions()
+                # I observed that subscription arrays sometimes
+                # come back with one element: an empty string.
+                # Should hunt that down; but for now:
+                if len(subscription_arr) == 1 and len(subscription_arr[0]) == 0:
+                    subscription_arr = [] 
                 return {"resp" : "topics", "content" : subscription_arr}
             else:
                 self.return_error("Not implemented: %s" % cmd)

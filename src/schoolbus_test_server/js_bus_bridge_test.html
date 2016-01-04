@@ -5,42 +5,75 @@
 		<title>Testing JavaScript-to-JSSchoolbusBridge</title>
 		
 		<style>
-	       form  { display: table;      }
-	       p     { display: table-row;  }
-	       label { display: table-cell; }
-	       input { display: table-cell; }
+	       form     { display: table;      }
+	       p        { display: table-row;  }
+	       label    { display: table-cell; }
+	       input    { display: table-cell; }
+	       .buttons { display: table-cell;
+	       			  vertical-align : top;
+	       			  padding : 0px 5px 0px 5px; 
+	       			}
+	       
 	       .wide { width  : 200px; }
 	       .subscriptions { height : 200px;
-	       				    width  : 200px; }
+	       				    width  : 200px;
+	       				    vertical-align : top; 
+	       				  }
 		</style>
 		
 		
 		<script type="text/javascript" charset="utf-8" src="js_bus_bridge.js"></script>
-		<script>
+		<script type="text/javascript" charset="utf-8" >
 		var msgCallback = function(msgStr) {
-			alert(msgStr);
+			// Add cr/lf:
+			document.getElementById('msgs').value += msgStr + '\r\n'; // ".&#13;&#10;";
 		}
 		var errCallback = alert;
 		
 		// Note: no use of 'new'; using Crockford's 'function' pattern
 		// for instance instantiation:
-		var interactor = busInteractor(msgCallback, errCallback);		
-		
-		// Var interactor will be initialized at the end
-		// of this file:
-		var subscribe = function(topic) {
-			interactor.subscribeToTopic(topic);
-		}
-		var unsubscribe = function(topic) {
-			interactor.unsubscribeFromTopic(topic);
-		}
-		var publish = function(txt, topic) {
-			interactor.publish(txt, topic);
-		}
-		
-		var onSubscribe = function() {
+		var interactor = busInteractor.getInstance({"msgCallback" : msgCallback, 
+												    "errCallback" : errCallback
+													});		
+		var onSubscribe = function(evt) {
 			topic = document.getElementById('topic').value
-			subscribe(topic);
+			interactor.subscribeToTopic(topic);
+			// If the HTML element to which you attached
+			// this handler is embedded in a form tag,
+			// then it is important to return false now.
+			// Otherwise the form is submitted, and the
+			// JavaScript environment is reset. This causes
+			// a closing of the websocket comm channel. We
+			// thereby lose all our subscriptions and have
+			// to subscribe again. (Maybe) depending on the browser
+			// we (also?) need to set the event's returnValue
+			// to false; do them both for good measure:
+			event.returnValue = false;
+			return false;
+		}
+		
+		var onUnsubscribe = function(evt) {
+			topic = document.getElementById('topic').value
+			interactor.unsubscribeFromTopic(topic);
+			event.returnValue = false;
+			return false;
+		}
+		
+		var onPublish = function(evt) {
+			topic = document.getElementById('topic').value
+			txt   = document.getElementById('msg').value
+			interactor.publish(txt, topic);
+			event.returnValue = false;
+			return false;
+		}
+		
+		var onTopics = function(evt) {
+			// Request list of topic to which we are
+			// subscribed. Result will be sent
+			// to the msgCallback():
+			interactor.subscribedTo();
+			event.returnValue = false;
+			return false;
 		}
 		
 		</script>
@@ -49,22 +82,20 @@
 	<form>
 		<p>
 			<label for="topic">Topic: </label>
-			<input type="text" class="wide" id="topic"> <button id="subscribe" onclick=onSubscribe()>Subscribe</button> 
-			  							   <button id="unsubscribe">Unsubscribe</button>
+			<input type="text" class="wide" id="topic"> 
+					<button id="subscribe" class="buttons" onclick=onSubscribe()>Subscribe</button> 
+			  		<button id="unsubscribe" class="buttons" onclick=onUnsubscribe()>Unsubscribe</button>
 		</p>
 		<p>
 			<label for="msg">Message to publish: </label>
-			<input type="text" class="wide" id="msg"> <button id="send">Publish</button>
+			<input type="text" class="wide" id="msg"> 
+			        <button id="send" class="buttons" onclick=onPublish()>Publish</button>
 		</p>
 		<p>
-			<label for="topics">Subscriptions: </label>
-			<input type="textarea" class="subscriptions" id="topics">
+			<label for="msgs">Subscriptions: </label>
+			<textarea class="subscriptions" id="msgs"></textarea>
+			        <button id="send" class="buttons" onclick=onTopics()>Subscriptions</button>
 		</p>
 	</form>
 	
-	<script>
-	// Note: no use of 'new'; using Crockford's 'function' pattern
-	// for instance instantiation:
-	//*****var interactor = busInteractor(msgCallback, errCallback);	
-	</script>
 </html>

@@ -15,17 +15,26 @@
  * to localhost.
  */
 
-function busInteractor(msgCallback, errCallback, busBridgeHost) {
+function busInteractor() {
 
 	/* ------------------------------------ Constants ------------------*/
+
+	// Enforce singleton: official way to get the
+	// singleton instance of this class is to call
+	//   busInteractor.getInstance([callbackFuncsObj])
+	// but if this func/calls is simply called:
+	//     busInteractor()
+	// then make sure we don't run through the func
+	// def again:
+	if (typeof my !== 'undefined') {
+		return  my.instance;
+	}
+	
 	// Make a private object in which we'll 
 	// stick instance vars and private methods:
 	var my = {};
 
-	my.originHost = 'localhost';
-	if (typeof busBridgeHost !== 'undefined') {
-		my.originHost = busBridgeHost;
-	}
+	my.instance = null;
 
 	my.USE_SSL = false;
 	my.controllerWebsocketPort  = 4363;
@@ -53,10 +62,32 @@ function busInteractor(msgCallback, errCallback, busBridgeHost) {
 	my.ws = null;
 	
 	/* ------------------------------------ Methods ------------------------*/
+
+	my.getInstance = function(callbackSpecs) {
+		/**
+		 * Enable getting an instance either
+		 * via busInteractor.getInstance()
+		 * or  <existingInstance>.getInstance()
+		 */
+		
+		if (typeof callbackSpecs !== 'undefined') {
+			if (typeof callbackSpecs.msgCallback !== 'undefined') {
+				my.setMsgCallback(callbackSpecs.msgCallback);
+			}
+			if (typeof callbackSpecs.errCallback !== 'undefined') {
+				my.setErrCallback(callbackSpecs.errCallback);
+			}
+			if (typeof callbackSpecs.bridgeHost !== 'undefined') {
+				my.setBridgeHost(callbackSpecs.bridgeHost);
+			}
+		}
+		return my.instance;
+	}
 	
-	my.construct = function() {
+	my.initialize= function() {
 		// Note URL of the host that pulled this JS file
-		// to its browser:
+		// to its browser; that will be the host that also
+		// listens for websocket connections:
 		if (window.location.host.length != 0) {
 			my.originHost = window.location.host;
 			my.originHostAndPort = my.originHost.split(':');
@@ -69,9 +100,32 @@ function busInteractor(msgCallback, errCallback, busBridgeHost) {
 		};
 		
 		my.connectAttemptTime = new Date();
-		
 	};
-
+	
+	my.setMsgCallback = function(newMsgCallback) {
+		if (typeof newMsgCallback !== "function") {
+			throw "Call to setMsgCallback takes a function as argument; was passed an '" +
+				   typeof newMsgCallback + "'."
+		}
+		my.msgCallback = newMsgCallback;
+	}
+	
+	my.setErrCallback = function(newErrCallback) {
+		if (typeof newErrCallback !== "function") {
+			throw "Call to setErrCallback takes a function as argument; was passed an '" +
+				   typeof newErrCallback + "'."
+		}
+		my.errCallback = newErrCallback;
+	}
+	
+	my.getMsgCallback = function() {
+		return my.msgCallback;
+	}
+	
+	my.getErrCallback = function() {
+		return my.errCallback;
+	}
+	
 	my.sendKeepAlive = function() {
 		//var req = buildRequest("keepAlive", "");
 		var req = "keepAlive";
@@ -182,7 +236,7 @@ function busInteractor(msgCallback, errCallback, busBridgeHost) {
 	}
 	
 	my.publish = function(str, topic) {
-		my.sendReq({"cmd" : "publish", "topic" : topic});
+		my.sendReq({"cmd" : "publish", "msg" : str, "topic" : topic});
 	}
 	
 	my.processServerResponse = function(argsObj) {
@@ -216,7 +270,12 @@ function busInteractor(msgCallback, errCallback, busBridgeHost) {
 		
 		if (resp == "topics") {
 			//var contents = my.txtArrayToStr(resp);
-			my.respCallback(String(argsObj["content"]));
+			content = argsObj["content"];
+			if (typeof content === 'undefined' ||
+				content.length == 0) {
+				content = "no subscriptions";
+			}
+			my.msgCallback(String(content));
 			return;
 		}
 		// Regular msg?:
@@ -270,7 +329,19 @@ function busInteractor(msgCallback, errCallback, busBridgeHost) {
 	that.unsubscribeFromTopic = my.unsubscribeFromTopic;
 	that.subscribedTo = my.subscribedTo;
 	that.publish = my.publish;
-	my.construct();
+	that.setMsgCallback = my.setMsgCallback;
+	that.setErrCallback = my.setErrCallback;
+	that.getMsgCallback = my.getMsgCallback;
+	that.getErrCallback = my.getErrCallback;
+	that.getInstance = my.getInstance;
+	
+	my.initialize();
 	my.initWebsocket();
+	my.instance = that;
 	return that;
+}
+//if (typeof busInteractor.prototype.instance === 'undefined') {
+if (typeof document.__busInteractor_instance === 'undefined') {
+	 document.__busInteractor_instance = busInteractor(alert, alert);
+	busInteractor.getInstance = document.__busInteractor_instance.getInstance;
 }
