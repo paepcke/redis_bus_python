@@ -21,8 +21,13 @@
 			alert(msgStr);
 		}
 		var errCallback = alert;
-		var interactor = BusInteractor(msgCallback, errCallback)
 		
+		// Note: no use of 'new'; using Crockford's 'function' pattern
+		// for instance instantiation:
+		var interactor = busInteractor(msgCallback, errCallback);		
+		
+		// Var interactor will be initialized at the end
+		// of this file:
 		var subscribe = function(topic) {
 			interactor.subscribeToTopic(topic);
 		}
@@ -58,6 +63,8 @@
 	</form>
 	
 	<script>
-	var interactor = new BusInteractor(msgCallback, errCallback);	
+	// Note: no use of 'new'; using Crockford's 'function' pattern
+	// for instance instantiation:
+	//*****var interactor = busInteractor(msgCallback, errCallback);	
 	</script>
 </html>

@@ -63,3 +63,5 @@ random
 socket
 string
 src/redis_bus_python/test/Old/
+.DS_Store
+src/.DS_Store

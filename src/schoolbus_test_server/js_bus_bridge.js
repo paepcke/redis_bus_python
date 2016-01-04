@@ -15,101 +15,100 @@
  * to localhost.
  */
 
-function BusInteractor(msgCallback, errCallback, busBridgeHost) {
+function busInteractor(msgCallback, errCallback, busBridgeHost) {
 
 	/* ------------------------------------ Constants ------------------*/
+	// Make a private object in which we'll 
+	// stick instance vars and private methods:
+	var my = {};
 
-	var that = this
-	
-	var msgCallback = msgCallback;
-	var errCallback = errCallback;
-	if (typeof busBridgeHost === 'undefined') {
-		originHost = 'localhost';
-	} else {
-		originHost = busBridgeHost;
+	my.originHost = 'localhost';
+	if (typeof busBridgeHost !== 'undefined') {
+		my.originHost = busBridgeHost;
 	}
 
-	var USE_SSL = false;
-	var controllerWebsocketPort  = 4363;
+	my.USE_SSL = false;
+	my.controllerWebsocketPort  = 4363;
 	// URL part after the domain and port.
 	// Server expects websocket connections there:
-	var originDir   = '/jsbusbridge';
+	my.originDir   = '/jsbusbridge';
 
 	// Websocket state 'ready for action'
 	// (Note: for other types of sockets the
 	// ready state is 1):
-	var WEBSOCKET_CONNECTING_STATE = 0;
-	var WEBSOCKET_READY_STATE = 1;
-	var WEBSOCKET_CLOSING_STATE = 2;
-	var WEBSOCKET_CLOSED_STATE = 3;
+	my.WEBSOCKET_CONNECTING_STATE = 0;
+	my.WEBSOCKET_READY_STATE = 1;
+	my.WEBSOCKET_CLOSING_STATE = 2;
+	my.WEBSOCKET_CLOSED_STATE = 3;
 	
-	var MAX_CONNECT_WAIT_TIME = 2000 // 2 seconds
+	my.MAX_CONNECT_WAIT_TIME = 2000 // 2 seconds
 	
-	var keepAliveInterval = 15000; /* 15 sec*/
+	my.keepAliveInterval = 15000; /* 15 sec*/
 	
 	/* ------------------------------------ Instance Vars ------------------*/
 
-	var keepAliveTimer    = null;
-	var connectAttemptTime = null;
+	my.keepAliveTimer    = null;
+	my.connectAttemptTime = null;
 	
-	that.ws = null;
+	my.ws = null;
 	
 	/* ------------------------------------ Methods ------------------------*/
 	
-	this.construct = function() {
+	my.construct = function() {
 		// Note URL of the host that pulled this JS file
 		// to its browser:
 		if (window.location.host.length != 0) {
-			originHost = window.location.host;
-			originHostAndPort = originHost.split(':');
-			originHost = originHostAndPort[0];
-			if (originHostAndPort.length > 1) {
-				originPort = originHostAndPort[1];
+			my.originHost = window.location.host;
+			my.originHostAndPort = my.originHost.split(':');
+			my.originHost = my.originHostAndPort[0];
+			if (my.originHostAndPort.length > 1) {
+				my.originPort = my.originHostAndPort[1];
 			} else {
-				originPort = undefined;
+				my.originPort = undefined;
 			}
 		};
 		
-		connectAttemptTime = new Date();
+		my.connectAttemptTime = new Date();
 		
-	}();
+	};
 
-	var sendKeepAlive = function() {
+	my.sendKeepAlive = function() {
 		//var req = buildRequest("keepAlive", "");
 		var req = "keepAlive";
-		if (ws === null) {
-			initWebsocket();
+		if (my.ws === null) {
+			my.initWebsocket();
 		}
-		ws.send(req);
+		my.ws.send(req);
 	}
 
-	var initWebsocket = function() {
-		if (USE_SSL) {
-			ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
+	my.initWebsocket = function() {
+		if (my.USE_SSL) {
+			my.ws = new WebSocket("wss://" + my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
 		} else {
-			ws = new WebSocket("ws://" + originHost + ':' + controllerWebsocketPort + originDir);
+			my.ws = new WebSocket("ws://" + my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
 		}
 		
-		ws.onopen = function() {
-		    keepAliveTimer = window.setInterval(function() {sendKeepAlive()}, keepAliveInterval);
+		my.ws.onopen = function() {
+		    my.keepAliveTimer = window.setInterval(function() { my.sendKeepAlive(); }, 
+		    									   my.keepAliveInterval);
 		};
 	
-		ws.onclose = function() {
-			if (keepAliveTimer !== null) {
-		    	clearInterval(keepAliveTimer);
+		my.ws.onclose = function() {
+			if (my.keepAliveTimer !== null) {
+		    	clearInterval(my.keepAliveTimer);
 			}
 		    errCallback("The browser or server closed the connection, or network trouble; please reload the page to resume.");
 		}
 	
-		ws.onerror = function(evt) {
-			if (keepAliveTimer !== null) {
-		    	clearInterval(keepAliveTimer);
+		my.ws.onerror = function(evt) {
+			if (my.keepAliveTimer !== null) {
+		    	clearInterval(my.keepAliveTimer);
 			}
 			// We only get an event that says 'error'; make a guess
 			// at what's wrong:
 			try {
 				if (Object.prototype.toString.call(evt.currentTarget) === "[object WebSocket]" &&
-						evt.currentTarget.readyState === WEBSOCKET_CLOSED_STATE) {
+						evt.currentTarget.readyState === my.WEBSOCKET_CLOSED_STATE) {
 					errCallback("The SchoolBus test server seems to be unreachable.")
 				} else {
 					errCallback("The browser has detected an error while communicating with the data server: " + evt.data);
@@ -120,7 +119,7 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 			} 
 		}
 
-		ws.onmessage = function(evt) {
+		my.ws.onmessage = function(evt) {
 		    // Internalize the JSON
 		    // e.g. "{resp : "courseList", "args" : ['course1','course2']"
 		    try {
@@ -130,58 +129,63 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 		    	errCallback('Error report from server (' + evt.data + '): ' + err );
 			return
 		    }
-		    processServerResponse(argsObj);
+		    my.processServerResponse(argsObj);
 		}
 	}
 	
-	this.wsReady = function() {
-		if (ws === null) {
-			initWebsocket();
+	my.wsReady = function() {
+		if (my.ws === null) {
+			my.initWebsocket();
 		}
-		return ws.readyState == WEBSOCKET_READY_STATE;
+		return my.ws.readyState == my.WEBSOCKET_READY_STATE;
 	}
 	
-	this.getWs = function() {
-		return ws;
+	my.getWs = function() {
+		return my.ws;
 	}
 
-	var sendReq = function(msgDict) {
-		if (ws === null) {
-			initWebsocket();
+	my.sendReq = function(msgDict) {
+		if (my.ws === null) {
+			my.initWebsocket();
 		}
-		if (ws.readyState != WEBSOCKET_READY_STATE) {
-			ws.onreadystatechange = function(msg) {
-				if (ws.readyState == WEBSOCKET_READY_STATE) {
-					ws.send(JSON.stringify(msgDict));
+		if (my.ws.readyState != my.WEBSOCKET_READY_STATE) {
+			my.onreadystatechange = function(msg) {
+				if (my.ws.readyState == my.WEBSOCKET_READY_STATE) {
+					my.ws.send(JSON.stringify(msgDict));
 				} else {
 					alert('Could not connect to server; timed out.');
 				}
 			};
 			return;
 		} else {
-			ws.send(msg);
+			my.ws.send(JSON.stringify(msgDict));
 		}
 	}
 	
-	this.subscribeToTopic = function(topic) {
-		sendReq({"cmd" : "subscribe", "topic" : topic});
+	my.subscribeToTopic = function(topic) {
+		my.sendReq({"cmd" : "subscribe", "topic" : topic});
 	}
 	
-	this.unsubscribeFromTopic = function(topic) {
-		sendReq({"cmd" : "unsubscribe", 'topic' : topic});
+	my.unsubscribeFromTopic = function(topic) {
+		my.sendReq({"cmd" : "unsubscribe", 'topic' : topic});
 	}
 	
-	this.subscribedTo = function() {
-		// Request list of all topics we are subscribed to.
-		// Result will arrive asynchronously.
-		sendReq({"cmd" : "subscribed_to"})
+	my.subscribedTo = function(respCallback) {
+		/*
+		 * Request list of all topics we are subscribed to.
+		 * Result will arrive asynchronously, and will
+		 * be delivered to the provided callback function.
+		 */
+		// Callback will be invoked by processServerResponse().
+		my.respCallback = respCallback;
+		my.sendReq({"cmd" : "subscribed_to"})
 	}
 	
-	this.publish = function(str, topic) {
-		sendReq({"cmd" : "publish", "topic" : topic});
+	my.publish = function(str, topic) {
+		my.sendReq({"cmd" : "publish", "topic" : topic});
 	}
 	
-	var processServerResponse = function(argsObj) {
+	my.processServerResponse = function(argsObj) {
 		/*
 		 * Called when a bus message arrives from the bridge,
 		 * or when the bridge responds to an earlier request
@@ -198,33 +202,46 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
          *                
          * vs:  {"error" : "errMsg"}
 		 */
-		var resp = argsObj.resp
-		if (isArray(resp)) {
-			var topics = txtArrayToStr(resp);
-			document.getElementById('topics').innerHtml = topics;
+
+		if (typeof argsObj != "object") {
+			errCallback("JS->Bus bridge sent an empty response.");
 			return;
 		}
-		// Error msg?:
-		if (typeof argsObj.resp !== 'undefined') {
+		
+		var resp = argsObj.resp	
+		if (typeof resp != "string") {
+			errCallback("JS->Bus bridge sent non-string response: " + String(resp));
+			return;
+		}
+		
+		if (resp == "topics") {
+			//var contents = my.txtArrayToStr(resp);
+			my.respCallback(String(argsObj["content"]));
+			return;
+		}
+		// Regular msg?:
+		if (resp == 'msg') {
 			// Regular message arrived:
-			str = argsObj.time + ' (' + argsObj.topic + "): " + argsObj.resp + '\r\n';
+			str = String(argsObj.time) + ' (' + String(argsObj.topic) + "): " + String(argsObj.content) + '\r\n';
 			msgCallback(str);
 			return;
 		}
-		if (typeof argsObj.error !== 'undefined') {
+		if (resp == 'error') {
 			// Error message arrived:
-			str = "Error: " + argsObj.error;
+			str = "Error: " + String(argsObj.content);
 			errCallback(str);
 			return;
 		}
 		// If we get here the server sent an unknown response
+		errCallback("JS->Bus bridge sent unknown response: " + String(resp));
+		return;
 	}	
 	
-	var isArray = function(obj) {
+	my.isArray = function(obj) {
 		return Object.prototype.toString.call( obj ) === '[object Array]';
 	}
 	
-	var txtArrayToStr = function(obj) {
+	my.txtArrayToStr = function(obj) {
 		if (! isArray(obj)) {
 			return obj
 		} 
@@ -245,4 +262,15 @@ function BusInteractor(msgCallback, errCallback, busBridgeHost) {
 		}
 		return res;
 	}
+	
+	// Make the object we'll actually return:
+	that = {}
+	// Add a reference to the public ones of the above methods:
+	that.subscribeToTopic = my.subscribeToTopic;
+	that.unsubscribeFromTopic = my.unsubscribeFromTopic;
+	that.subscribedTo = my.subscribedTo;
+	that.publish = my.publish;
+	my.construct();
+	my.initWebsocket();
+	return that;
 }

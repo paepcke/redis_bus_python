@@ -55,11 +55,19 @@ Protocol on websocket between this bridge and the browser
                          "content" : "theMessageContent",
                          "topic" : "theTopic",
                          "time" : "isoSendTimeStr"} 
+   - Topic list delivery: response to browser requesting subscribed_to;
+     browser called w/  {"resp" : "topics",
+                         "content" : <jsonStringArray>,
+                         "time" : "isoSendTimeStr"}
+   
+   
    - Errors: errors flow from the bridge to the browser. Error msgs
              look like this:
-     Error delivery:    {"error" : "errMsg"}
+     Error delivery:    {"resp" : "error",
+                         "content" : "errMsg"}
              where details are optional.
 '''
+#******import Queue
 
 import Queue
 from __builtin__ import True
@@ -112,12 +120,6 @@ class JsBusBridge(WebSocketHandler):
     LOG_LEVEL_INFO  = 2
     LOG_LEVEL_DEBUG = 3
     
-    IMPLEMENTED_CMDS = ['subscribe',
-                        'unsubscribe',
-                        'publish',
-                        'subscribed_to'
-                        ]
-
     # ----------------------------- Class Variables ---------------------
     
     instantiation_lock = threading.Lock()
@@ -337,7 +339,8 @@ class BrowserInteractorThread(threading.Thread):
         # from the ioloop. 'Processed' means sent back to
         # the browser.
         
-        self.bus_msg_queue = Queue.Queue()
+        #*****self.bus_msg_queue = Queue.Queue()
+        self.bus_msg_queue = Queue.Queue();
         
         # Callback for bus adapter to deliver an incoming bus
         # msg to this thread; on_bus_message() will just queue
@@ -356,6 +359,7 @@ class BrowserInteractorThread(threading.Thread):
  
                                                                  )
         self.done = False
+        self.periodic_callback.start()
         
     def stop(self):
         '''
@@ -394,6 +398,7 @@ class BrowserInteractorThread(threading.Thread):
             try:
                 # Wait for requests from the Web UI:
                 msg_dict = self.browser_request_queue.get(DO_BLOCK, BrowserInteractorThread.CHECK_DONE_PERIOD)
+
                 # Double check: another way to release
                 # the block of this queue is to feed it a '\0':
                 if msg_dict == '\0':
