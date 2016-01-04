@@ -3,16 +3,43 @@
  * Communicates via websocket to a server that
  * forwards published messages to the bus, and
  * delivers incoming messages for subscribed topics
- * to the Web browser where this BusInteractor runs.
- * Such a generic server is js_bus_bridge.py. Its
- * protocol expectations are matched with this interactor.
+ * to the Web browser where this busInteractor runs.
+ * The generic server to match this client is 
+ * js_bus_bridge.py. It must be running, and its
+ * protocol expectations are matched with this
+ * client.
  * 
- * Client creates an instance of BusInteractor,
- * passing a function to call with incoming bus 
- * messages, a function to call when errors occur,
- * and an optional third argument with the bus bridge
- * server's fully qualified domain name. It defaults
- * to localhost.
+ * This client has two options, both callback functions:
+ * msgCallback() is called when incoming messages 
+ * arrive from the SchoolBus. Function errCallback()
+ * is called when errors are encountered. Defaults
+ * for these callbacks is the built-in alert() function.
+ * 
+ *  This client is a singleton. Get that one instance
+ *  via:
+ *       busInteractor.getInstance([specs])
+
+ *  where the optional 'specs' is an object:
+ *  
+ *     {"msgCallback" : msg_callback_func,
+ *      "errCallback" : err_callback_func
+ *     }
+ *  Either of these keys may be omitted. Either
+ *  value can be changed at runtime via:
+ *  
+ *     setMsgCallback() and
+ *     setErrCallback().
+ *     
+ *  API:
+ *  	subscribeToTopic(topic)     : subscribe to topic       
+ * 		unsubscribeFromTopic(topic) : unsubscribe from topic
+ *		subscribedTo()              : get list of subscriptions -> stringified array of str
+ *		publish(msg,topic)          : publish text msg to topic
+ *		setMsgCallback(callback)    : change msgCallback
+ *		setErrCallback(callback)	: change errCallback
+ *		getMsgCallback()		    : get current msgCallback
+ *		getErrCallback()			: get current errCallback
+ * 
  */
 
 function busInteractor() {
@@ -338,10 +365,16 @@ function busInteractor() {
 	my.initialize();
 	my.initWebsocket();
 	my.instance = that;
+	busInteractor.getInstance = my.getInstance;
 	return that;
 }
-//if (typeof busInteractor.prototype.instance === 'undefined') {
-if (typeof document.__busInteractor_instance === 'undefined') {
-	 document.__busInteractor_instance = busInteractor(alert, alert);
-	busInteractor.getInstance = document.__busInteractor_instance.getInstance;
+// The above func adds the getInstance() function to
+// the top level function busInteractor(). This happens
+// way at the func's end. We can therefore determine
+// whether busInteractor() ever ran by checking whether
+// the function has the attr getInstance(). If not,
+// the function is run, and the singleton instance is
+// created:
+if (typeof busInteractor.getInstance === 'undefined') {
+	busInteractor(alert,alert);
 }

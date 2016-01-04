@@ -1,4 +1,22 @@
 <!DOCTYPE html>
+<!--
+	Example for using the JavaScript->SchoolBus bridge.
+	The bridge consists of two parts: the JavaScript client,
+	and a JS->SchoolBus server running at the machine from
+	which the JavaScript is served. See js_bus_bridge.js
+	for lots of documentation in the header comment.
+	
+	The intent is for clients to write JavaScript that subscribes
+	to the Bus, and sends/receives messages after loading the
+	js_bus_bridge.js file.
+	
+	This HTML file is just a hello world example of performing
+	operations on the SchoolBus. When loaded, the HTML also
+	loads js_bus_bridge.js. It then builds a simple interface
+	for exercising the API. The script section tells all there
+	is to know about operating the API. 
+ -->
+ 
 <html>
 	<head>
 		<meta charset="utf-8">
@@ -36,8 +54,11 @@
 												    "errCallback" : errCallback
 													});		
 		var onSubscribe = function(evt) {
+			// Event handler when 'Subscribe button is clicked:
+				
 			topic = document.getElementById('topic').value
 			interactor.subscribeToTopic(topic);
+		
 			// If the HTML element to which you attached
 			// this handler is embedded in a form tag,
 			// then it is important to return false now.
