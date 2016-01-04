@@ -67,8 +67,6 @@ Protocol on websocket between this bridge and the browser
                          "content" : "errMsg"}
              where details are optional.
 '''
-#******import Queue
-
 import Queue
 from __builtin__ import True
 import datetime
@@ -339,7 +337,6 @@ class BrowserInteractorThread(threading.Thread):
         # from the ioloop. 'Processed' means sent back to
         # the browser.
         
-        #*****self.bus_msg_queue = Queue.Queue()
         self.bus_msg_queue = Queue.Queue();
         
         # Callback for bus adapter to deliver an incoming bus
@@ -349,28 +346,18 @@ class BrowserInteractorThread(threading.Thread):
         
         # Callback in parent that safely writes to websocket:
         self._write_to_browser_callback = functools.partial(self.websocket_comm_obj._write_to_browser)
-        
-        # Create a periodic callback that checks the in-msg
-        # queue for bus msgs that arrived and need to be 
-        # forwarded to the browser.
-        
-        self.periodic_callback = tornado.ioloop.PeriodicCallback(functools.partial(self.service_bus_inmsg_queue),
-                                                                 JsBusBridge.PERIODIC_IN_MSG_CHECK
- 
-                                                                 )
+
+        # Callback used by on_bus_message() to schedule a call
+        # to service_bus_inmsg_queue() after placing the incoming
+        # bus msg into the bus_msg_queue: 
+        self._bus_msg_check_callback = functools.partial(self.service_bus_inmsg_queue)
         self.done = False
-        self.periodic_callback.start()
         
     def stop(self):
         '''
         Stop the Web UI request servicing, cleaning up all underlying
         threads.
         '''
-
-        # Stop the checks for incoming messages:
-        if self.periodic_callback is not None:
-            self.periodic_callback.stop()
-            
         self.done = True
         # Immediately unblock the queue of requests
         # from the browser:
@@ -482,21 +469,24 @@ class BrowserInteractorThread(threading.Thread):
     def on_bus_message(self, msg):
         '''
         Called asynchronously from bus adapter when a bus msg arrives.
-        Just queue the message; it will be picked up by
-        a periodic ioloop callback to service_bus_inmsg_queue().
+        Note this means the call comes from another thread!
+        Queue the message, and schedule a call to service_bus_insmg_queue().
+        That method will pick the msg up and send it back to the 
+        browser.
         
         :param msg: message from SchoolBus
         :type msg: BusMessage
         '''
         self.bus_msg_queue.put_nowait(msg)
-        
+        tornado.ioloop.IOLoop.instance().add_callback(self._bus_msg_check_callback)
     
     def service_bus_inmsg_queue(self):
         '''
-        Called periodically from ioloop. Checks whether bus
-        messages have arrived from the SchoolBus, and forwards
-        them to the browser. These are only msgs on topics 
-        explicitly subscribed to via the Web UI.
+        Called via a scheduled call by on_bus_message.
+        Picks up the bus message placed in the bus_msg_queue 
+        by on_bus_message. Forwards message to the browser. 
+        These are only msgs on topics explicitly subscribed 
+        to via the Web UI.
         '''
         
         while not self.bus_msg_queue.empty():
@@ -574,7 +564,7 @@ def sig_handler(sig, frame):
     # Schedule call to shutdown, so that all ioloop
     # related calls are from main thread:
     #****** 
-    print('sig handler called')
+    #print('sig handler called')
     #****** 
     tornado.ioloop.IOLoop.instance().add_callback(shutdown) 
 
@@ -620,7 +610,6 @@ if __name__ == "__main__":
     else:
         protocol_spec = 'ws'
         http_server = tornado.httpserver.HTTPServer(application)
-        #*****http_server.listen(JS_BRIDGE_WEBSOCKET_PORT)
         application.listen(JS_BRIDGE_WEBSOCKET_PORT)
 
     JsBusBridge.bus = BusAdapter(host=bus_server)

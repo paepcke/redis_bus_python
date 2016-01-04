@@ -178,7 +178,10 @@ class BusMessage(object):
         Returns the message's time in ISO8601 format.
         Example: '2015-07-05T22:16:18+00:00' for GMT
         '''
-        return datetime.datetime.fromtimestamp(self._time).isoformat()
+        try:
+            return datetime.datetime.fromtimestamp(self._time).isoformat()
+        except TypeError:
+            return 'null'
     
     @property
     def content(self):
