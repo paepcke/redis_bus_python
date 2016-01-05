@@ -1,0 +1,78 @@
+<doctype "utf-8">
+  <html>
+    <head>
+      <link rel="stylesheet" type="text/css" href="index.css">
+    </head>
+    <body>
+      <h2>About http://myhost/schoolbus</h2>
+      This URL holds code for accessing a SchoolBus. For Web
+      applications the js_bus_bridge.js is relevant. It provides
+      JavaScript programs with a busInteractor() function:
+      <p>
+	Generic javascript access to SchoolBus bridge.
+	Communicates via websocket to a server that
+	forwards published messages to the bus, and
+	delivers incoming messages for subscribed topics
+	to the Web browser where this busInteractor runs.
+	The generic server to match this client is 
+	js_bus_bridge.py. It must be running, and its
+	protocol expectations are matched with this
+	client.
+      <p>
+	This client has two options, both callback functions:
+	msgCallback() is called when incoming messages 
+	arrive from the SchoolBus. Function errCallback()
+	is called when errors are encountered. Defaults
+	for these callbacks is the built-in alert() function.
+      <p>
+	 This client is a singleton. Get that one instance
+	 via:
+      <p>
+	      <code>busInteractor.getInstance([specs])</code>
+      <p>
+	where the optional 'specs' is an object:
+	<p>
+	   <code>
+	       {"msgCallback" : msg_callback_func,<br>
+	        "errCallback" : err_callback_func<br>
+	    }
+	   </code>
+	<p>
+	 Either of these keys may be omitted. Either
+	 value can be changed at runtime via:
+	 <p>
+	 <code>	 
+	    setMsgCallback() and
+	    setErrCallback().
+	 </code>	    
+
+	 <h2> API </h2>
+	 <div class="api">
+	   <span class="apielement">subscribeToTopic(topic)</span>
+	   <span class="apidoc">subscribe to topic</span>
+	   <p>
+	     <span class="apielement">unsubscribeFromTopic(topic)</span>
+	     <span class="apidoc">unsubscribe from topic</span>
+	   <p>
+	     <span class="apielement">subscribedTo()</span>
+	     <span class="apidoc">get list of subscriptions ->
+	       stringified array of str</span>
+	   <p>
+	     <span class="apielement">publish(msg,topic)</span>
+	     <span class="apidoc">publish text msg to topic</span>
+	   <p>
+	     <span class="apielement">setMsgCallback(callback)</span>
+	     <span class="apidoc">change msgCallback</span>
+	   <p>
+	     <span class="apielement">setErrCallback(callback)</span>
+	     <span class="apidoc">change errCallback</span>
+	   <p>
+	     <span class="apielement">getMsgCallback()</span>
+	     <span class="apidoc">get current msgCallback</span>
+	   <p>
+	     <span class="apielement">getErrCallback()</span>
+	     <span class="apidoc">get current errCallback</span>
+	   <p>
+         </div>
+</body>
+</html>

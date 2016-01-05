@@ -1,0 +1,15 @@
+.api        	{padding-left : 100px;
+		 display : table;
+		}
+.api p          { display : table-row}
+.apielement 	{color : red;
+		 display : table-cell;
+		}
+.apidoc     	{color : green;
+		 display : table-cell;
+		 padding-left : 20px;
+		}
+				    
+code            {display: inline-block;
+		 padding-left: 20px;
+		}
