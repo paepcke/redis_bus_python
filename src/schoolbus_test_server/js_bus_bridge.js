@@ -62,6 +62,12 @@ function busInteractor() {
 	var my = {};
 
 	my.instance = null;
+	
+	// Default message and error funcs;
+	// They are typically replaced when
+	// a client calls busInteractor.getInstance():
+	my.msgCallback = function(msg) { alert(msg); };
+	my.errCallback = function(msg) { alert(msg); };
 
 	my.USE_SSL = false;
 	my.controllerWebsocketPort  = 4363;
@@ -77,7 +83,12 @@ function busInteractor() {
 	my.WEBSOCKET_CLOSING_STATE = 2;
 	my.WEBSOCKET_CLOSED_STATE = 3;
 	
+	// Total time to wait for the websocket
+	// to the server to complete:
 	my.MAX_CONNECT_WAIT_TIME = 2000 // 2 seconds
+	// How often to check whether the initial
+	// websocket connection has completed:
+	my.INTER_CHECK_CONNECT_TIME = 50 //
 	
 	my.keepAliveInterval = 15000; /* 15 sec*/
 	
@@ -163,6 +174,7 @@ function busInteractor() {
 	}
 
 	my.initWebsocket = function() {
+		
 		if (my.USE_SSL) {
 			my.ws = new WebSocket("wss://" + my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
 		} else {
@@ -178,7 +190,7 @@ function busInteractor() {
 			if (my.keepAliveTimer !== null) {
 		    	clearInterval(my.keepAliveTimer);
 			}
-		    errCallback("The browser or server closed the connection, or network trouble; please reload the page to resume.");
+		    my.errCallback("The browser or server closed the connection, or network trouble; please reload the page to resume.");
 		}
 	
 		my.ws.onerror = function(evt) {
@@ -190,13 +202,13 @@ function busInteractor() {
 			try {
 				if (Object.prototype.toString.call(evt.currentTarget) === "[object WebSocket]" &&
 						evt.currentTarget.readyState === my.WEBSOCKET_CLOSED_STATE) {
-					errCallback("The SchoolBus test server seems to be unreachable.")
+					my.errCallback("The SchoolBus test server seems to be unreachable.")
 				} else {
-					errCallback("The browser has detected an error while communicating with the data server: " + evt.data);
+					my.errCallback("The browser has detected an error while communicating with the data server: " + evt.data);
 				}
 			
 			} catch(err) {
-				errCallback("The browser has detected an error while communicating with the data server: " + evt.data);
+				my.errCallback("The browser has detected an error while communicating with the data server: " + evt.data);
 			} 
 		}
 
@@ -207,7 +219,7 @@ function busInteractor() {
 			//var oneLineData = evt.data.replace(/(\r\n|\n|\r)/gm," ");
 			argsObj = JSON.parse(evt.data);
 		    } catch(err) {
-		    	errCallback('Error report from server (' + evt.data + '): ' + err );
+		    	my.errCallback('Error report from server (' + evt.data + '): ' + err );
 			return
 		    }
 		    my.processServerResponse(argsObj);
@@ -285,13 +297,21 @@ function busInteractor() {
 		 */
 
 		if (typeof argsObj != "object") {
-			errCallback("JS->Bus bridge sent an empty response.");
+			my.errCallback("JS->Bus bridge sent an empty response.");
 			return;
 		}
 		
 		var resp = argsObj.resp	
 		if (typeof resp != "string") {
-			errCallback("JS->Bus bridge sent non-string response: " + String(resp));
+			my.errCallback("JS->Bus bridge sent non-string response: " + String(resp));
+			return;
+		}
+
+		// Regular msg? (most common case:):
+		if (resp == 'msg') {
+			// Regular message arrived:
+			str = String(argsObj.time) + ' (' + String(argsObj.topic) + "): " + String(argsObj.content) + '\r\n';
+			my.msgCallback(str);
 			return;
 		}
 		
@@ -305,21 +325,15 @@ function busInteractor() {
 			my.msgCallback(String(content));
 			return;
 		}
-		// Regular msg?:
-		if (resp == 'msg') {
-			// Regular message arrived:
-			str = String(argsObj.time) + ' (' + String(argsObj.topic) + "): " + String(argsObj.content) + '\r\n';
-			msgCallback(str);
-			return;
-		}
+
 		if (resp == 'error') {
 			// Error message arrived:
 			str = "Error: " + String(argsObj.content);
-			errCallback(str);
+			my.errCallback(str);
 			return;
 		}
 		// If we get here the server sent an unknown response
-		errCallback("JS->Bus bridge sent unknown response: " + String(resp));
+		my.errCallback("JS->Bus bridge sent unknown response: " + String(resp));
 		return;
 	}	
 	
@@ -364,8 +378,24 @@ function busInteractor() {
 	
 	my.initialize();
 	my.initWebsocket();
+
+	// Wait for the websocket to the server to
+	// complete connecting for up to my.MAX_CONNECT_WAIT_TIME.
+	// No error msg needed for timeout b/c the 
+	// onerror msg takes care of that:
+	var start_time = (new Date()).getTime();
+	var waitFunc = function() {
+		if (my.wsReady() ||
+			(new Date()).getTime() - start_time >= my.MAX_CONNECT_WAIT_TIME) {
+			clearInterval(timer);
+		}
+	}
+
+	var timer = setInterval(waitFunc, my.INTER_CHECK_CONNECT_TIME);
+	
 	my.instance = that;
 	busInteractor.getInstance = my.getInstance;
+	
 	return that;
 }
 // The above func adds the getInstance() function to
