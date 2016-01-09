@@ -21,14 +21,19 @@
 
  *  where the optional 'specs' is an object:
  *  
- *     {"msgCallback" : msg_callback_func,
- *      "errCallback" : err_callback_func
+ *     {"msgCallback" : msg_callback_func(msg),
+ *      "errCallback" : err_callback_func(errMsg)
  *     }
  *  Either of these keys may be omitted. Either
  *  value can be changed at runtime via:
  *  
  *     setMsgCallback() and
  *     setErrCallback().
+ *     
+ *  the msg parameter is a JS object with keys
+ *  'time', 'topic', and 'content'. The errMsg
+ *  parameter is an object with keys 'time', and
+ *  'content'. Time will be in ISO string format. 
  *     
  *  API:
  *  	subscribeToTopic(topic)     : subscribe to topic       
@@ -62,6 +67,7 @@ function busInteractor() {
 	var my = {};
 
 	my.instance = null;
+	my.instancePromise = null; //*****
 	
 	// Default message and error funcs;
 	// They are typically replaced when
@@ -89,6 +95,7 @@ function busInteractor() {
 	// How often to check whether the initial
 	// websocket connection has completed:
 	my.INTER_CHECK_CONNECT_TIME = 50 //
+	my.connectAttemptStartTime = 
 	
 	my.keepAliveInterval = 15000; /* 15 sec*/
 	
@@ -115,11 +122,31 @@ function busInteractor() {
 			if (typeof callbackSpecs.errCallback !== 'undefined') {
 				my.setErrCallback(callbackSpecs.errCallback);
 			}
-			if (typeof callbackSpecs.bridgeHost !== 'undefined') {
-				my.setBridgeHost(callbackSpecs.bridgeHost);
-			}
 		}
-		return my.instance;
+		my.instancePromise = new Promise(function(resolve, reject) {
+			if (my.wsReady()) {
+				resolve(my.instance);
+				return my.instance;
+			}
+			// Schedule another check for ws-ready,
+			// unless total allowed wait time has already
+			// been exceeded:
+			if (new Date() - my.connectAttemptTime < my.MAX_CONNECT_WAIT_TIME) {
+				setTimeout(function() {
+					if (my.wsReady()) {
+						resolve(my.instance);
+						return my.instance;
+						}
+				}, my.INTER_CHECK_CONNECT_TIME);
+			}
+			else {
+				reject("Timeout while waiting for WebSocket connection to " +
+						my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
+				return;
+			}
+				
+			}) // end new Promise
+		return my.instancePromise;
 	}
 	
 	my.initialize= function() {
@@ -136,8 +163,6 @@ function busInteractor() {
 				my.originPort = undefined;
 			}
 		};
-		
-		my.connectAttemptTime = new Date();
 	};
 	
 	my.setMsgCallback = function(newMsgCallback) {
@@ -176,12 +201,27 @@ function busInteractor() {
 	my.initWebsocket = function() {
 		
 		if (my.USE_SSL) {
-			my.ws = new WebSocket("wss://" + my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
-		} else {
-			my.ws = new WebSocket("ws://" + my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
+				my.ws = new WebSocket("wss://" + my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
+			} else {
+				my.ws = new WebSocket("ws://" + my.originHost + ':' + my.controllerWebsocketPort + my.originDir);
 		}
+		// Note when we started the connection process:
+		my.connectAttemptTime = new Date();
 		
 		my.ws.onopen = function() {
+			/**
+			 * Called when websocket successfully opened.
+			 * If a client called getInstance() before the
+			 * connection is complete, then a promise will
+			 * be sitting unresolved in my.instancePromise.
+			 * Since the connection succeeded, we fulfill the
+			 * promise now: 
+			 */
+			//******
+/*			if (my.instancePromise !== null) {
+				my.instancePromise.resolve(my.instance);
+			}
+*/			//******
 		    my.keepAliveTimer = window.setInterval(function() { my.sendKeepAlive(); }, 
 		    									   my.keepAliveInterval);
 		};
@@ -310,8 +350,11 @@ function busInteractor() {
 		// Regular msg? (most common case:):
 		if (resp == 'msg') {
 			// Regular message arrived:
-			str = String(argsObj.time) + ' (' + String(argsObj.topic) + "): " + String(argsObj.content) + '\r\n';
-			my.msgCallback(str);
+			//str = String(argsObj.time) + ' (' + String(argsObj.topic) + "): " + String(argsObj.content) + '\r\n';
+			//my.msgCallback(str);
+
+			// Callback with time, topic, and returned content:
+			my.msgCallback(argsObj);
 			return;
 		}
 		
@@ -328,8 +371,11 @@ function busInteractor() {
 
 		if (resp == 'error') {
 			// Error message arrived:
-			str = "Error: " + String(argsObj.content);
-			my.errCallback(str);
+			//str = "Error: " + String(argsObj.content);
+			//my.errCallback(str);
+			
+			// Callback with time and error string:
+			my.errCallback(argsObj);
 			return;
 		}
 		// If we get here the server sent an unknown response
@@ -377,9 +423,12 @@ function busInteractor() {
 	that.getInstance = my.getInstance;
 	
 	my.initialize();
+	my.instance = that;
 	my.initWebsocket();
 
-	// Wait for the websocket to the server to
+	
+//****************	
+/*	// Wait for the websocket to the server to
 	// complete connecting for up to my.MAX_CONNECT_WAIT_TIME.
 	// No error msg needed for timeout b/c the 
 	// onerror msg takes care of that:
@@ -392,11 +441,12 @@ function busInteractor() {
 	}
 
 	var timer = setInterval(waitFunc, my.INTER_CHECK_CONNECT_TIME);
+*/
 	
-	my.instance = that;
+//****************	
 	busInteractor.getInstance = my.getInstance;
 	
-	return that;
+	return null;
 }
 // The above func adds the getInstance() function to
 // the top level function busInteractor(). This happens
@@ -407,4 +457,7 @@ function busInteractor() {
 // created:
 if (typeof busInteractor.getInstance === 'undefined') {
 	busInteractor(alert,alert);
+	// Now the top level function ran, and Web
+	// socket connecting is under way, but not done!
+	// Clients do need to use promises.
 }

@@ -249,7 +249,8 @@ class JsBusBridge(WebSocketHandler):
         :type error_str: str
         '''
         response_dict = {"resp" : "error",
-                         "content" : error_str}
+                         "content" : error_str,
+                         "time" : datetime.datetime.fromtimestamp(time.time()).isoformat()}                         
         self.write_message(json.dumps(response_dict))
 
     def byteify(self, the_input):
@@ -558,7 +559,8 @@ class BrowserInteractorThread(threading.Thread):
         :type error_str: str
         '''
         response_dict = {"resp" : "error",
-                         "content" : error_str}
+                         "content" : error_str,
+                         "time" : datetime.datetime.fromtimestamp(time.time()).isoformat()}
         self.write_to_browser(json.dumps(response_dict))
 
     def ensure_lower_non_array(self, val):
