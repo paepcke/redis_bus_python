@@ -53,13 +53,14 @@ function busInteractor() {
 
 	// Enforce singleton: official way to get the
 	// singleton instance of this class is to call
-	//   busInteractor.getInstance([callbackFuncsObj])
+	//   busInteractor.getInstance([Callbackfuncsobj])
 	// but if this func/calls is simply called:
 	//     busInteractor()
 	// then make sure we don't run through the func
-	// def again:
+	// def more than once (we do need to run through
+	// it once):
 	if (typeof my !== 'undefined') {
-		return  my.instance;
+		throw "Please obtain the busInteractor instance via busInteractor.getInstance([Callbackfuncsobj])." 
 	}
 	
 	// Make a private object in which we'll 
