@@ -410,7 +410,8 @@ function busInteractor() {
 		return res;
 	}
 	
-	// Make the object we'll actually return:
+	// Make the object we would actually return
+	// if this wasn't a singlton:
 	that = {}
 	// Add a reference to the public ones of the above methods:
 	that.subscribeToTopic = my.subscribeToTopic;
@@ -426,25 +427,7 @@ function busInteractor() {
 	my.initialize();
 	my.instance = that;
 	my.initWebsocket();
-
 	
-//****************	
-/*	// Wait for the websocket to the server to
-	// complete connecting for up to my.MAX_CONNECT_WAIT_TIME.
-	// No error msg needed for timeout b/c the 
-	// onerror msg takes care of that:
-	var start_time = (new Date()).getTime();
-	var waitFunc = function() {
-		if (my.wsReady() ||
-			(new Date()).getTime() - start_time >= my.MAX_CONNECT_WAIT_TIME) {
-			clearInterval(timer);
-		}
-	}
-
-	var timer = setInterval(waitFunc, my.INTER_CHECK_CONNECT_TIME);
-*/
-	
-//****************	
 	busInteractor.getInstance = my.getInstance;
 	
 	return null;
