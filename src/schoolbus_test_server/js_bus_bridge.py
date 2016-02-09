@@ -70,6 +70,7 @@ Protocol on websocket between this bridge and the browser
                          "content" : "errMsg"}
              where details are optional.
 '''
+
 import Queue
 from __builtin__ import True
 import datetime
@@ -80,6 +81,7 @@ import signal
 import socket
 import sys
 import threading
+import time
 
 import argparse
 import tornado.httpserver
@@ -102,6 +104,8 @@ DONT_BLOCK = False
 # Time to wait in join() for child threads to 
 # terminate:
 JOIN_WAIT_TIME = 5 # sec
+# Periodic check for incoming messages to forward to browser:
+PERIODIC_IN_MSG_CHECK = 100 # milliseconds
 
 
 class JsBusBridge(WebSocketHandler):
@@ -111,11 +115,7 @@ class JsBusBridge(WebSocketHandler):
     '''
 
     # ----------------------------- Class-Level Constants ---------------------
-    
-    # Periodic check for incoming messages to forward to browser:
-    
-    PERIODIC_IN_MSG_CHECK = 100 # milliseconds
-    
+        
     LOG_LEVEL_NONE  = 0
     LOG_LEVEL_ERR   = 1
     LOG_LEVEL_INFO  = 2
@@ -124,6 +124,18 @@ class JsBusBridge(WebSocketHandler):
     # ----------------------------- Class Variables ---------------------
     
     instantiation_lock = threading.Lock()
+    
+    # The periodic timeouts for the tornado
+    # ioloop. They are needed to give incoming 
+    # bus messages a chance to be processed;
+    # We don't start the callbacks here, b/c
+    # the ioloop won't be running yet. They are
+    # started in the __init__() method if they
+    # aren't running yet:
+    tornado_interrupts = tornado.ioloop.PeriodicCallback(lambda: True, 
+                                                         PERIODIC_IN_MSG_CHECK
+                                                         )
+    
     
     # SchoolBus server (a.k.a. redis server)
     bus = None
@@ -146,12 +158,13 @@ class JsBusBridge(WebSocketHandler):
             
             self.browser_request_queue = Queue.Queue() 
             
-            # Callback from ioloop to this instance
-            # to check the above queues of messages
-            # from the schoolbus:
-            
-            self.periodic_callback = None
-            
+            # Make sure the periodic interrupts of the
+            # ioloop are happening. When they occur,
+            # the bus code has a chance to process incoming
+            # requests:
+            if not JsBusBridge.tornado_interrupts.is_running():
+                JsBusBridge.tornado_interrupts.start()
+        
             # Thread that handles all requests from this browser;
             # pass self for that thread to refer back to this instance:
             
@@ -240,7 +253,8 @@ class JsBusBridge(WebSocketHandler):
         :type error_str: str
         '''
         response_dict = {"resp" : "error",
-                         "content" : error_str}
+                         "content" : error_str,
+                         "time" : datetime.datetime.fromtimestamp(time.time()).isoformat()}                         
         self.write_message(json.dumps(response_dict))
 
     def byteify(self, the_input):
@@ -365,6 +379,11 @@ class BrowserInteractorThread(threading.Thread):
         Stop the Web UI request servicing, cleaning up all underlying
         threads.
         '''
+        # Unsubscribe from all topics (topic name omitted):
+        #self.bus.unsubscribeFromTopic()
+        for topic in self.bus.mySubscriptions():
+            self.bus.unsubscribeFromTopic(topic)
+        
         self.done = True
         # Immediately unblock the queue of requests
         # from the browser:
@@ -392,7 +411,9 @@ class BrowserInteractorThread(threading.Thread):
             try:
                 # Wait for requests from the Web UI:
                 msg_dict = self.browser_request_queue.get(DO_BLOCK, BrowserInteractorThread.CHECK_DONE_PERIOD)
-
+                
+                if self.done:
+                    return
                 # Double check: another way to release
                 # the block of this queue is to feed it a '\0':
                 if msg_dict == '\0':
@@ -441,7 +462,14 @@ class BrowserInteractorThread(threading.Thread):
                 if topic is None:
                     self.return_error("Subscription cmd requires a topic parameter.")
                     return None
-                self.bus.subscribeToTopic(topic, self.bus_msg_delivery)
+                #******
+                #self.bus.subscribeToTopic(topic, self.bus_msg_delivery)
+                self.bus.subscribeToTopic(topic, functools.partial(on_bus_message_outside_thread, self))
+                #******
+                # For testing: can print to terminal 
+                # instead of sending incoming msgs back
+                # to browser:
+                #self.bus.subscribeToTopic(topic, None)
                 return None
             elif cmd == 'unsubscribe':
                 topic = msg_dict.get('topic', None)
@@ -487,6 +515,12 @@ class BrowserInteractorThread(threading.Thread):
         :param msg: message from SchoolBus
         :type msg: BusMessage
         '''
+        # If this interactor thread has been stopped:
+        # ignore the message. This will avoid asking
+        # the main thread to send the message to an 
+        # already closed websocket:
+        if self.done:
+            return
         self.bus_msg_queue.put_nowait(msg)
         tornado.ioloop.IOLoop.instance().add_callback(self._bus_msg_check_callback)
     
@@ -527,7 +561,8 @@ class BrowserInteractorThread(threading.Thread):
         :type error_str: str
         '''
         response_dict = {"resp" : "error",
-                         "content" : error_str}
+                         "content" : error_str,
+                         "time" : datetime.datetime.fromtimestamp(time.time()).isoformat()}
         self.write_to_browser(json.dumps(response_dict))
 
     def ensure_lower_non_array(self, val):
@@ -554,6 +589,13 @@ class BrowserInteractorThread(threading.Thread):
     def logDebug(self, msg):
         self.websocket_comm_obj.logDebug(msg)
 
+
+def on_bus_message_outside_thread(interactor_thread, msg):
+    if interactor_thread.done:
+        return
+    interactor_thread.bus_msg_queue.put_nowait(msg)
+    tornado.ioloop.IOLoop.instance().add_callback(interactor_thread._bus_msg_check_callback)
+    
 
 def makeApp():
     '''
@@ -627,7 +669,7 @@ if __name__ == "__main__":
         (protocol_spec, socket.gethostname(), JS_BRIDGE_WEBSOCKET_PORT)
 
     print(start_msg)
-    
+
     try:
         ioloop = tornado.ioloop.IOLoop.instance()
         ioloop.start()

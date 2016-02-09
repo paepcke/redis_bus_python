@@ -60,6 +60,8 @@ class BusAdapter(object):
         self.resultDeliveryFunc = functools.partial(self._awaitSynchronousReturn)
         self.topicThreads = {}
         
+        self.defaultResultCallback = functools.partial(self._defaultResultCallback)
+        
         self.rserver =  redis_lib.StrictRedis(host=host, port=port, db=db)
         self.pub_sub = self.rserver.pubsub()
         
@@ -142,9 +144,10 @@ class BusAdapter(object):
         calls your handler faster, but while your handler has control, the 
         underlying communication mechanism cannot process other messages.
         
-        If deliveryCallback is None, then method _deliverResult() will be called
+        If deliveryCallback is None, then method _defaultResultCallback() will be called
         when a message arrives. That method is intended to be a 
-        placeholder with no side effects.
+        placeholder with no side effects, except that it prints
+        information about the message. Just used for testing.
         
         The context is any object or structure that is
         meaningful to the delivery callback. This could be the instance
@@ -162,8 +165,10 @@ class BusAdapter(object):
                  
         :param topicIdentifier: name or regex Python Pattern instance of topic(s) to listen for.
         :type topicIdentifier: {string | Pattern}
-        :param deliveryCallable: a callable that takes a BusMessage instance 
-        :type deliveryCallable: callable
+        :param deliveryCallable: a callable that takes a BusMessage instance.
+                if None, a default callback is used that just prints information
+                from the incoming message.
+        :type deliveryCallable: {callable || None}
         :param threaded: if True, messages are delivered through a thread via a queue.
             The thread invokes deliveryCallable
         :type threaded: boolean
@@ -172,7 +177,7 @@ class BusAdapter(object):
         '''
         
         if deliveryCallable is None:
-            deliveryCallable = self.resultCallback
+            deliveryCallable = self.defaultResultCallback
         elif type(deliveryCallable) != types.FunctionType and type(deliveryCallable) != functools.partial:
             raise ValueError("Parameter deliveryCallback must be a function, was of type %s" % type(deliveryCallable))            
 
@@ -208,6 +213,21 @@ class BusAdapter(object):
         else:
             topic_spec = {pattern_str : delivery_queue if threaded else deliveryCallable}
             self.pub_sub.psubscribe(context, **topic_spec)
+
+    def _defaultResultCallback(self, inMsg):
+        '''
+        A callback for incoming message that simply
+        prints the message. Used when a caller to
+        subscribeToTopic() explicitly specifies None
+        for the delivery callback. See also 
+        declaration of defaultResultCallback's partial
+        function object.
+        
+        :param inMsg: Any incoming message from the bus.
+        :type inMsg: BusMessage
+        '''
+        msgInfo = '%s (%s): %s' % (inMsg.isoTime, inMsg.topicName, inMsg.content)
+        print(msgInfo)
 
     def unsubscribeFromTopic(self, topicIdentifier=None):
         '''

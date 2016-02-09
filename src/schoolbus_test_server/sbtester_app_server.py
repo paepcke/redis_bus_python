@@ -118,10 +118,10 @@ class BusTesterWebController(WebSocketHandler):
             # Thread that handles all requests from the browser;
             # pass self for that thread to refer back to this instance:
             
-            self.browser_interactor_thread = BrowserInteractorThread(self, self.browser_request_queue)
+            self.browser_interactor = BrowserInteractorThread(self, self.browser_request_queue)
             # Make thread die if this parent instance goes away:
-            self.browser_interactor_thread.daemon = True
-            self.browser_interactor_thread.start()
+            self.browser_interactor.daemon = True
+            self.browser_interactor.start()
         
     def allow_draft76(self):
         '''
@@ -163,12 +163,12 @@ class BusTesterWebController(WebSocketHandler):
     def on_close(self):
         self.logDebug('Websocket was closed; shutting down school test server...')
         
-        self.browser_interactor_thread.stop()
-        self.browser_interactor_thread.join(JOIN_WAIT_TIME)
-        if self.browser_interactor_thread.is_alive():
-            raise TimeoutError("Unable to stop browser interactor thread '%s'." % self.browser_interactor_thread.name)
+        self.browser_interactor.stop()
+        self.browser_interactor.join(JOIN_WAIT_TIME)
+        if self.browser_interactor.is_alive():
+            raise TimeoutError("Unable to stop browser interactor thread '%s'." % self.browser_interactor.name)
         
-        self.browser_interactor_thread = None
+        self.browser_interactor = None
         self.logDebug('School test server is shut down...')
         #**********
         #threadStacktraces()
