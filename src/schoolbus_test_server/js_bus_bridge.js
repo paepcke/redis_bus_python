@@ -72,9 +72,11 @@ function busInteractor() {
 	
 	// Default message and error funcs;
 	// They are typically replaced when
-	// a client calls busInteractor.getInstance():
-	my.msgCallback = function(msg) { alert(msg); };
-	my.errCallback = function(msg) { alert(msg); };
+	// a client calls busInteractor.getInstance().
+	// Parms for stringify: JavaScript data to replace,
+	// relacer function, indentation for pretty-print:
+	my.msgCallback = function(msg) { alert(JSON.stringify(msg, null, 4)); };
+	my.errCallback = function(msg) { alert(JSON.stringify(msg, null, 4)); };
 
 	my.USE_SSL = false;
 	my.controllerWebsocketPort  = 4363;
