@@ -200,13 +200,17 @@ class JsBusBridge(WebSocketHandler):
     def on_close(self):
         self.logDebug('Websocket was closed; shutting down this JS-SchoolBus bridge connection...')
         
+        # Unsubscribe from all topics by not providing a 
+        # topic name to unsubscribe:
+        self.browser_request_queue.put_nowait({"cmd" : "unsubscribe"})
+
+        # Shut down thread that manages communication with the bus:
         self.browser_interactor_thread.stop()
         self.browser_interactor_thread.join(JOIN_WAIT_TIME)
         if self.browser_interactor_thread.is_alive():
             raise TimeoutError("Unable to stop browser interactor thread '%s'." % self.browser_interactor_thread.name)
         
         self.browser_interactor_thread = None
-        self.logDebug('JS-SchoolBus bridge server is shut down...')
         #**********
         #threadStacktraces()
         #threading.enumerate()
@@ -441,9 +445,7 @@ class BrowserInteractorThread(threading.Thread):
                 return None
             elif cmd == 'unsubscribe':
                 topic = msg_dict.get('topic', None)
-                if topic is None:
-                    self.return_error("Unsubscribe cmd requires a topic parameter.")
-                    return None
+                # Note: if no topic was provided, unsubscribes from all topics:
                 self.bus.unsubscribeFromTopic(topic)
                 return None
             elif cmd == 'publish':
@@ -581,7 +583,6 @@ def shutdown():
     '''
     Carefully shut everything down.
     '''
-
     io_loop = tornado.ioloop.IOLoop.instance()
     # Schedule the shutdown for after all pending
     # requests have been services:
@@ -635,4 +636,4 @@ if __name__ == "__main__":
     except Exception as e:
         print('Bombed out of tornado IO loop: %s' % `e`)
     
-    print('School bus test server has shut down.')
+    print('School bus JavaScript bridge has shut down.')

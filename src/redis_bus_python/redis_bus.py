@@ -225,18 +225,22 @@ class BusAdapter(object):
         :param topicIdentifier: name of topic to subscribe from
         :type topicIdentifier: {string | None | pattern}
         '''
-        # Is pattern identifier an regex pattern?
-        try:
-            pattern_str = topicIdentifier.pattern
-            # Unsubscribing from a pattern:
-            self.pub_sub.punsubscribe(pattern_str)
-        except AttributeError:
-            # Regular string, not a pattern:
-            self.pub_sub.unsubscribe(topicIdentifier)
-            pattern_str = topicIdentifier
-        
         if topicIdentifier is None:
-            # Kill all topic threads:
+            # Unsubscribe from all:
+            
+            # First: unsubscribe from the redis server for all
+            # patterns and strings:
+            for topicId in self.mySubscriptions():
+                try:
+                    # topicId may be a string or a pattern instance:
+                    pattern_str = topicId.pattern
+                    # Unsubscribing from a pattern:
+                    self.pub_sub.punsubscribe(pattern_str)
+                except AttributeError:
+                    # Regular string, not a pattern instance:
+                    self.pub_sub.unsubscribe(topicId)
+                    
+            # Next: kill all topic threads:
             for deliveryThread in self.topicThreads.values():
                 deliveryThread.stop()
                 # Wait for thread to finish; timeout is a bit more
@@ -247,20 +251,35 @@ class BusAdapter(object):
                     raise TimeoutError("Unable to stop delivery thread '%s'." % deliveryThread.name)
 
             self.topicThreads = {}
-        else:
-            try:
-                self.topicThreads[pattern_str].stop()
-                # Wait for thread to finish; timeout is a bit more
-                # than the 'stop-looking-at-queue' timeout used to check
-                # for periodic thread stoppage:
-                self.topicThreads[topicIdentifier].join(JOIN_WAIT_TIME)
-                if self.topicThreads[topicIdentifier].is_alive():
-                    raise TimeoutError("Unable to stop topicThreads[%s] thread '%s'." %\
-                                       (topicIdentifier, self.topicThreads[topicIdentifier].name))
-                
-                del self.topicThreads[topicIdentifier]
-            except KeyError:
-                pass
+            return
+
+        # Caller passed in not None, but a pattern instance 
+        # or topic name:
+        # Is pattern identifier a regex pattern?
+        try:
+            pattern_str = topicIdentifier.pattern
+            # Unsubscribing from a pattern:
+            self.pub_sub.punsubscribe(pattern_str)
+        except AttributeError:
+            # Regular string, not a pattern:
+            self.pub_sub.unsubscribe(topicIdentifier)
+            pattern_str = topicIdentifier
+        
+        # Next: kill the topic thread associated with the
+        # pattern or string:
+        try:
+            self.topicThreads[pattern_str].stop()
+            # Wait for thread to finish; timeout is a bit more
+            # than the 'stop-looking-at-queue' timeout used to check
+            # for periodic thread stoppage:
+            self.topicThreads[topicIdentifier].join(JOIN_WAIT_TIME)
+            if self.topicThreads[topicIdentifier].is_alive():
+                raise TimeoutError("Unable to stop topicThreads[%s] thread '%s'." %\
+                                   (topicIdentifier, self.topicThreads[topicIdentifier].name))
+            
+            del self.topicThreads[topicIdentifier]
+        except KeyError:
+            pass
             
             
     def makeResponseMsg(self, incomingBusMsg, responseContent):
