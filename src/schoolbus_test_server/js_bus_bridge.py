@@ -7,7 +7,7 @@ Created on Jan 2, 2016
 Created on January 1, 2015
 
 TODO: 
-  o on_close: have interactor thread unsubscribe from all
+
 
 @author: paepcke
 
@@ -220,7 +220,8 @@ class JsBusBridge(WebSocketHandler):
         self.browser_interactor_thread.stop()
         self.browser_interactor_thread.join(JOIN_WAIT_TIME)
         if self.browser_interactor_thread.is_alive():
-            raise TimeoutError("Unable to stop browser interactor thread '%s'." % self.browser_interactor_thread.name)
+            #raise TimeoutError("Unable to stop browser interactor thread '%s'." % self.browser_interactor_thread.name)
+            self.logErr("Unable to stop browser interactor thread '%s'." % self.browser_interactor_thread.name)
         
         self.browser_interactor_thread = None
         #**********
