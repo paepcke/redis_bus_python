@@ -1,10 +1,9 @@
+#!/usr/bin/env python
 '''
 Created on Jan 2, 2016
 
 @author: paepcke
-'''
-#!/usr/bin/env python
-'''
+
 Created on January 1, 2015
 
 TODO: 
