@@ -68,8 +68,9 @@ class BusAdapter(object):
     def publish(self, busMessage, sync=False, timeout=None, block=True, auth=None):
         '''
         Main method for publishing a message. 
-        If you are publishing a response to a synchronous call, set 
-        the topicName in the BusMessage instance to self.get_responseTopic(incoming-bus-msg))
+        If you are publishing a response to a synchronous call, use
+        self.makeResponseMsg(incoming-bus-msg) to create the busMessage that you
+        pass into this method.
         
         :param busMessage: A BusMessage object.
         :type busMessage: BusMessage
@@ -111,7 +112,7 @@ class BusAdapter(object):
         msgDict = dict(zip(['id', 'time', 'content'],
                            [msgUuid, int(time.time()), msg]))
 
-        # If synchronous operation requested, wait for response:
+        # If synchronous operation requested, wait for response from recipient:
         if sync:
             returnTopic = self.getResponseTopic(busMessage)
             # Post the request, and get the response in one command:
