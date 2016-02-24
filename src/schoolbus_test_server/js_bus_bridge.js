@@ -62,10 +62,12 @@ function busInteractor() {
 	if (typeof my !== 'undefined') {
 		throw "Please obtain the busInteractor instance via busInteractor.getInstance([Callbackfuncsobj])." 
 	}
-	
+
 	// Make a private object in which we'll 
 	// stick instance vars and private methods:
 	var my = {};
+
+	my.USE_SSL = false;
 
 	my.instance = null;
 	my.instancePromise = null; //*****
@@ -78,7 +80,6 @@ function busInteractor() {
 	my.msgCallback = function(msg) { alert(JSON.stringify(msg, null, 4)); };
 	my.errCallback = function(msg) { alert(JSON.stringify(msg, null, 4)); };
 
-	my.USE_SSL = false;
 	my.controllerWebsocketPort  = 4363;
 	// URL part after the domain and port.
 	// Server expects websocket connections there:
@@ -106,6 +107,8 @@ function busInteractor() {
 
 	my.keepAliveTimer    = null;
 	my.connectAttemptTime = null;
+
+	my.expectedSyncReturns = {}
 	
 	my.ws = null;
 	
@@ -116,6 +119,14 @@ function busInteractor() {
 		 * Enable getting an instance either
 		 * via busInteractor.getInstance()
 		 * or  <existingInstance>.getInstance()
+		 * 
+		 * :param callbackSpecs: object containing values for
+		 * 			keys "msgCallback" and "errCallback". The
+		 * 			former will be called with all messages from
+		 * 			the Python bus bridge. The latter will be
+		 * 			called with any error messages. Both have
+		 * 			good defaults.
+		 * :type callbackSpecs: {object | undefined}
 		 */
 		
 		if (typeof callbackSpecs !== 'undefined') {
@@ -317,26 +328,100 @@ function busInteractor() {
 		my.sendReq({"cmd" : "subscribed_to"})
 	}
 	
-	my.publish = function(str, topic) {
-		my.sendReq({"cmd" : "publish", "msg" : str, "topic" : topic});
+	my.publish = function(strOrObj, topic, syncOptions) {
+		/*
+		 * Publish a message to the bus via the bridge.
+		 * Two cases: if the synchOptions parameter is undefined,
+		 * (i.e. not provided) then just publish the msg oneway.
+		 * The Bus also provides for pseudo-synchronous publish.
+		 * The published message is intended to evoke a return 
+		 * value, similar to a remote procedure call. In JavaScript
+		 * this facility is implemented as a callback, which must
+		 * be passed to this function in the syncOptions.
+
+		 * The synchOptions, if present, is expected to be an object
+		 * with either one or two fields. The field syncCallback
+		 * is required. Its value must be a function that takes
+		 * the returned result of the synchronous-publish. The function
+		 * will be called when the return result arrives. 
+		 * 
+		 * The second, optional field is "timeout" whose value
+		 * must be a timeout in fractional seconds. The JS bridge
+		 * imposes its own safety timeout of 2 seconds, which will
+		 * be enforced if no timeout is provided. However, if you
+		 * really want to hang forever, specify -1 for the timeout. 
+		 * 
+		 * Implementation: in case of a synchronous-publish, 
+		 * the JS bridge expects a UUID that it will include
+		 * with the return value. That UUID will be used in this
+		 * module to find the appropriate callback function to call.
+		 * 
+		 * The processServerResponse() method, which is called whenever
+		 * any message arrives from the bridge will receive the return
+		 * value and execute the callback to the function provided
+		 * in syncOptions.
+		 * 
+		 * :param strOrObj: a string to publish, or a JavaScript object.
+		 *      In the latter case the object will be turned into a 
+		 *      JSON string.
+		 * :param topic: bus topic to which message will be published.
+		 * :param synchOptions: optional. If present, must be object
+		 * 			  {"syncCallback" : <callbackFunc>,
+		 *             "timeout"      : <factionalSecs> OR -1    <---- optional
+		 *            }
+		 */
+		
+		if (typeof strOrObj === "object") {
+			str = JSON.stringify(strOrObj);
+		} else {
+			str = strOrObj;
+		}
+		
+		if (typeof syncOptions === "undefined") {
+			my.sendReq({"cmd" : "publish", "msg" : str, "topic" : topic});
+			return
+		}
+		
+		var callback = syncOptions.syncCallback; 
+		if (typeof callback !== 'function') {
+			my.errCallback(`Callback parameter for synchronous publishing must be a function; was ${callback}`);
+			return;
+		}
+		
+		var timeout = syncOptions.timeout;
+		if (typeof timeout !== 'undefined') {
+			if (typeof timeout != 'number') {
+				throw `Timeout for synchronous-publish must be a number, was ${timeout}.` 
+			}
+		}
+		uuid = my.generateUUID();
+		my.expectedSyncReturns[uuid] = callback;
+		if (typeof timeout === 'undefined') {
+			my.sendReq({"cmd" : "publish", "msg" : str, "topic" : topic, "synchronous" : uuid});
+		} else {
+			my.sendReq({"cmd" : "publish", "msg" : str, "topic" : topic, "synchronous" : uuid, "timeout" : timeout});
+		}
 	}
 	
 	my.processServerResponse = function(argsObj) {
 		/*
-		 * Called when a bus message arrives from the bridge,
-		 * or when the bridge responds to an earlier request
-		 * for the subscribed-to topics. The difference is
-		 * detected by the value of the "resp" key. If it is
-		 * an array, it's a list of subscribed-to topics.
-		 * Else it's a msg or error string:
+		 * Called when a bus message arrives from the JS/SchoolBus bridge
+		 * via the web socket.
 		 * 
-		 *      {"resp": ["topic1", "topic2", ...]}
-		 * vs:
-		 *      {"resp" : "theMessageContent", 
-         *                "topic" : "theTopic",
-         *                "time" : "isoSendTimeStr"}
-         *                
-         * vs:  {"error" : "errMsg"}
+		 * The message is structured like this:
+		 *     {"resp" : "msg",
+         *       "content" : bus_msg.content, 
+         *       "topic" : bus_msg.topicName,
+         *       "time" : bus_msg.isoTime
+         *      ["respId" : id of prior synchronous publish]
+		 *     } 
+		 * 
+		 * The resp value may be:
+		 *     - 'msg'      : a message to whose content we subscribed earlier. Most common case
+		 *     - 'topics'   : a list of topics this browser subscribed to earlier.
+		 *                    Sent by the bridge in response to an earlier subscribed_to cmd
+		 *     - 'error'    : an error message returned from an earlier command
+		 *     - 'return'   : the result of an earlier synchronous-publish command.
 		 */
 
 		if (typeof argsObj != "object") {
@@ -353,12 +438,43 @@ function busInteractor() {
 		// Regular msg? (most common case:):
 		if (resp == 'msg') {
 			// Regular message arrived:
-			//str = String(argsObj.time) + ' (' + String(argsObj.topic) + "): " + String(argsObj.content) + '\r\n';
-			//my.msgCallback(str);
 
-			// Callback with time, topic, and returned content:
+			// Callback with time, topic, and content:
 			my.msgCallback(argsObj);
 			return;
+		}
+		
+		if (resp == 'return') {
+			respId = argsObj.respId;
+			// Does the in-msg contain the necessary response id that we
+			// passed to the bridge when we made the synchronous call to
+			// which this is the response?
+			if (typeof respId === 'undefined') {
+				my.errCallback("Return value from bus bridge without a response Id: " + argsObj);
+				return;
+			}
+			// Are we expecting this return value?
+			synchResultCallback = my.expectedSyncReturns[respId]; 
+			if (typeof synchResultCallback === 'undefined') {
+				// Nope:
+				my.errCallback("Unexpected 'return' to an unregistered synchronous publish command: " + argsObj);
+				return;
+			}
+			// We trust that the entity registered as a callback for the return
+			// value is a function; that was checked in the publish method:
+			try {
+				var returnedJson = JSON.parse(argsObj.content);
+			} catch(err) {
+				my.errCallback(`Callback result from synchronous call (${argsObj.content}) is bad JSON: ${err}`);
+				return;
+			}
+			try {
+				synchResultCallback(returnedJson);
+				return;
+			} catch(err) {
+				my.errCallback(`Callback for synchronous publish erred: '${err}'`);
+				return;
+			}
 		}
 		
 		if (resp == "topics") {
@@ -385,6 +501,20 @@ function busInteractor() {
 		my.errCallback("JS->Bus bridge sent unknown response: " + String(resp));
 		return;
 	}	
+	
+     my.generateUUID = function(){
+    	 var d = performance.now()
+    	 if(window.performance && typeof window.performance.now === "function"){
+    		 d += performance.now(); //use high-precision timer if available
+    	 }
+    	 var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    		 var r = (d + Math.random()*16)%16 | 0;
+    		 d = Math.floor(d/16);
+    		 return (c=='x' ? r : (r&0x3|0x8)).toString(16);
+    	 });
+    	 return uuid;
+     }
+	
 	
 	my.isArray = function(obj) {
 		return Object.prototype.toString.call( obj ) === '[object Array]';

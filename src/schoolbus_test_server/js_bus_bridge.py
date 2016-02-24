@@ -12,24 +12,28 @@ TODO:
 @author: paepcke
 
 Generic bridge connecting JavaScript-running
-browsers with the SchoolBus. Basic bus interactions
-are implemented: (un)subscribe, publish. The
-generic counterpart is the JavaScript bus_interactor.js.
-It knows to talk to this bridge.
+browsers with the SchoolBus. This code is a server that
+communicates with a SchoolBus via the standards BusAdapter
+class, and with browsers via websockets. A single server
+can handle multiple browser clients: each browser gets
+the full attention of a separate thread. The Tornado 
+framework is used to implement that websocket sid. 
 
-Runs two threads: the main thread listens for connections
-from a browser via websocket. For each such standing connection
-tornado creates an instance of JsBusBridge. Each instance
-in turn creates a BrowserInteractorThread instance. Each main thread's
-JsBusBridge instance maintains a queue between it and its 
-BrowserInteractorThread instance. Websocket messages arriving
-from the browser are placed in that queue.
+The browser-side client that knows to interact with this
+bridge is bus_interactor.js.
 
-The BrowserInteractorThread instances are responsible for
-dealing with the SchoolBus. The queue from the main thread
-will feed the thread messages from the browser (see associated
-protocol below). This is how browsers subscribe, unsubscribe,
-publish, and receive lists of subscribed-to topics.
+The following bus commands are supported: subscribe, unsubscribe,
+publish (both synchronously and asynchronously), requesting a 
+list topics to which a given client is subscribed.
+
+The  thread listens for websocket connections on port
+JS_BRIDGE_WEBSOCKET_PORT. When a connection arrives, Tornado
+instantiates class JsBusBridge, which spawns a BrowserInteractorThread
+instance. The JsBusBridge instance receives all subsequent
+bus requests from the browser, and queues them for the BrowserInteractorThread
+to handle. The BrowserInteractorThread interacts with a common
+SchoolBus instance to subscribe, publish, etc. on the browser's
+behalf. 
 
 On receiving a subscribe command from the browser, the 
 BrowserInteractorThread instance subscribes to the SchoolBus on
@@ -42,12 +46,20 @@ from the bus are buffered in a queue to handle high speeds
 
 Protocol on websocket between this bridge and the browser
    - All messages between browser and this bridge are JSON formatted.
+   
    - Subscribe:         {"cmd" : "subscribe", "topic" : "myTopic"}
         -> no response
+        
    - Unsubscribe:       {"cmd" : "unsubscribe", "topic" : "myTopic"}
         -> no response
-   - Publish:           {"cmd" : "publish", "msg" : "msgTxt", "topic" : "myTopic} 
-        -> no response
+        
+   - Publish:           {"cmd" : "publish", 
+                         "msg" : "msgTxt", 
+                         "topic" : "myTopic",
+                         "synchronous" : "responseId",
+                         "timeout" : 0.8} 
+        -> no response if asynchronous call, else result message.
+                 
    - Subscription list: {"cmd" : "subscribed_to"}
         -> response:    {"resp": "topics",
                          "content" : ["topic1", "topic2", ...]}
@@ -57,6 +69,7 @@ Protocol on websocket between this bridge and the browser
                          "content" : "theMessageContent",
                          "topic" : "theTopic",
                          "time" : "isoSendTimeStr"} 
+                         
    - Topic list delivery: response to browser requesting subscribed_to;
      browser called w/  {"resp" : "topics",
                          "content" : <jsonStringArray>,
@@ -68,6 +81,18 @@ Protocol on websocket between this bridge and the browser
      Error delivery:    {"resp" : "error",
                          "content" : "errMsg"}
              where details are optional.
+             
+For synchronous-publish requests, the "synchronous" request field must
+contain an identifier that, when included in the result message "respId" 
+field to the browser will allow the browser side to pair the result with the prior
+synchronous-publish request. This scheme allows for the absence of
+sleeping in JavaScript. See bus_interactor.js for how this scheme is
+handled on the JavaSide. The timeout in the publish message is an optional
+maximum time to wait for a synchronous publish to obtain a result. The value
+is fractional seconds. If omitted, a default of SYNCH_CALL_TIMEOUT
+is used. Only if the timeout is provided AND it is -1, will the
+thread truly hang forever. Be careful!!!
+
 '''
 
 import Queue
@@ -95,6 +120,14 @@ from redis_bus_python.redis_lib.exceptions import TimeoutError
 
 sys.path.append(os.path.dirname(__file__))
 
+# If the following is set to True, then
+# the copy of js_bus_bridge.js that browsers 
+# use must also be set to True, and vice
+# versa:
+
+SSL_USED = False
+
+
 JS_BRIDGE_WEBSOCKET_PORT = 4363
 
 DO_BLOCK = True
@@ -119,6 +152,12 @@ class JsBusBridge(WebSocketHandler):
     LOG_LEVEL_ERR   = 1
     LOG_LEVEL_INFO  = 2
     LOG_LEVEL_DEBUG = 3
+    
+    # Even if a browser asks for a synchronous publish without
+    # also specifying a 'timeout' field, we put in a 
+    # safety so that those callbacks won't hang forever:
+     
+    SYNCH_CALL_TIMEOUT = 2 # seconds
     
     # ----------------------------- Class Variables ---------------------
     
@@ -363,6 +402,7 @@ class BrowserInteractorThread(threading.Thread):
         # Callback for bus adapter to deliver an incoming bus
         # msg to this thread; on_bus_message() will just queue
         # the message:
+        
         self.bus_msg_delivery = functools.partial(self.on_bus_message)
         
         # Callback in parent that safely writes to websocket:
@@ -371,8 +411,15 @@ class BrowserInteractorThread(threading.Thread):
         # Callback used by on_bus_message() to schedule a call
         # to service_bus_inmsg_queue() after placing the incoming
         # bus msg into the bus_msg_queue: 
+        
         self._bus_msg_check_callback = functools.partial(self.service_bus_inmsg_queue)
         self.done = False
+        
+        # Place to remember waiting for results to prior
+        # synchronous publishing:
+        
+        self.pending_synch_results = {}
+        
         
     def stop(self):
         '''
@@ -462,10 +509,7 @@ class BrowserInteractorThread(threading.Thread):
                 if topic is None:
                     self.return_error("Subscription cmd requires a topic parameter.")
                     return None
-                #******
-                #self.bus.subscribeToTopic(topic, self.bus_msg_delivery)
-                self.bus.subscribeToTopic(topic, functools.partial(on_bus_message_outside_thread, self))
-                #******
+                self.subscribe_on_browser_behalf(topic)
                 # For testing: can print to terminal 
                 # instead of sending incoming msgs back
                 # to browser:
@@ -485,9 +529,44 @@ class BrowserInteractorThread(threading.Thread):
                 if topic is None:
                     self.return_error("Publish cmd requires a message string in field 'msg'.")
                     return None
+                
                 bus_msg = BusMessage(content=msg, topicName=topic)
-                self.bus.publish(bus_msg)
-                return None
+
+                # All is in order. Is the publication to be synchronous?
+                # If not, things are simple:
+                response_id = msg_dict.get('synchronous', None)
+                if response_id is None: 
+                    self.bus.publish(bus_msg)
+                    return None
+                
+                # Otherwise: we will wait for the result of
+                # the publication. The response_id contains a
+                # uuid from the browser, which we will include
+                # in the eventual result sent back to the browser.
+                # Check whether browser client specified a timeout:
+                
+                if msg_dict.get('timeout', None) is None:
+                    timeout = JsBusBridge.SYNCH_CALL_TIMEOUT
+                elif timeout == -1:
+                    # Hang forever!!! (Though only the connection to the
+                    # requesting browser:
+                    timeout = None
+                else:
+                    # Ensure that timeout is a flow or int:
+                    if type(timeout) != int and type(timeout) != float:
+                        err_msg = "Bad format of timeout value in synchronous-publish request: %s" % timeout
+                        self.logErr(err_msg)
+                        self.return_error(err_msg)
+                try:
+                    result_content = self.bus.publish(bus_msg, sync=True, timeout=timeout)
+                except TimeoutError:
+                    err_msg = "Synchronous-publish did not receive a result within %s seconds." % str(timeout);
+                    self.logErr(err_msg)
+                    self.return_error(err_msg)
+                return {"resp" : "return",           # Msg to browser is response to prior synch-pub
+                        "respId" : response_id,      # For browser to match result with prior synch-pub
+                        "content" : result_content}  # Result of the synchronous call.
+                    
             elif cmd == 'subscribed_to':
                 subscription_arr = self.bus.mySubscriptions()
                 # I observed that subscription arrays sometimes
@@ -503,6 +582,9 @@ class BrowserInteractorThread(threading.Thread):
             err_msg = "Error while interacting with bus: %s" % `e`
             self.logErr(err_msg)
             self.return_error(err_msg)
+
+    def subscribe_on_browser_behalf(self, topic):
+        self.bus.subscribeToTopic(topic, functools.partial(on_bus_message_outside_thread, self))        
 
     def on_bus_message(self, msg):
         '''
@@ -653,8 +735,7 @@ if __name__ == "__main__":
                    'keyfile'  : keyFile}
 
     # For SSL:
-    ssl_used = False
-    if ssl_used:
+    if SSL_USED:
         protocol_spec = 'wss'
         http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
         application.listen(JS_BRIDGE_WEBSOCKET_PORT, ssl_options=sslArgsDict)

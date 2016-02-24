@@ -40,6 +40,12 @@ from schoolbus_test_server import OnDemandPublisher
 
 sys.path.append(os.path.dirname(__file__))
 
+# If the following is set to True, then
+# sbtester.js must also be set to use SSH,
+# and vice versa:
+
+SSL_USED = False
+
 BUS_TESTER_WEBSOCKET_PORT = 8001
 
 DO_BLOCK = True
@@ -770,25 +776,18 @@ if __name__ == "__main__":
 #     print('Starting SchoolBus test server and Web controller on port %d' % BUS_TESTER_WEBSOCKET_PORT)
 #     tornado.ioloop.IOLoop.instance().start()
     
-    (certFile,keyFile) = BusTesterWebController.getCertAndKey()
-    sslArgsDict = {'certfile' : certFile,
-                   'keyfile'  : keyFile}
 
-    # For SSL:
-    ssl_used = True
-    http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
-    application.listen(BUS_TESTER_WEBSOCKET_PORT, ssl_options=sslArgsDict)
-    
-    
-    # For non-ssl:
-    #ssl_used = False
-    #http_server = tornado.httpserver.HTTPServer(application)
-    #http_server.listen(BUS_TESTER_WEBSOCKET_PORT)
-
-    if ssl_used:
+    if SSL_USED:
         protocol_spec = 'wss'
+        (certFile,keyFile) = BusTesterWebController.getCertAndKey()
+        sslArgsDict = {'certfile' : certFile,
+                       'keyfile'  : keyFile}
+        http_server = tornado.httpserver.HTTPServer(application,ssl_options=sslArgsDict)
+        application.listen(BUS_TESTER_WEBSOCKET_PORT, ssl_options=sslArgsDict)
     else:
         protocol_spec = 'ws'
+        http_server = tornado.httpserver.HTTPServer(application)
+        application.listen(BUS_TESTER_WEBSOCKET_PORT)
 
     start_msg = 'Starting SchoolBus websocket server on %s://%s:%d/bus/' % \
         (protocol_spec, socket.gethostname(), BUS_TESTER_WEBSOCKET_PORT)

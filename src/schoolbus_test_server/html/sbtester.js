@@ -15,6 +15,10 @@ function SbTesterControl() {
 
 	/* ------------------------------------ Constants ------------------*/
 
+	// The following must match the corresponding 
+	// setting in sbtester_app_server.py:
+	var USE_SSL = false;
+	
 	// Websocket state 'ready for action'
 	// (Note: for other types of sockets the
 	// ready state is 1):
@@ -76,8 +80,11 @@ function SbTesterControl() {
 
 	this.initWebsocket = function() {
 		//*********
-		//ws = new WebSocket("ws://" + originHost + ':' + controllerWebsocketPort + originDir);
-		ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
+		if (USE_SSL) {
+			ws = new WebSocket("wss://" + originHost + ':' + controllerWebsocketPort + originDir);
+		} else {
+			ws = new WebSocket("ws://" + originHost + ':' + controllerWebsocketPort + originDir);
+		}
 
 		//*********
 		
