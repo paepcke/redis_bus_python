@@ -526,7 +526,7 @@ class BrowserInteractorThread(threading.Thread):
                     self.return_error("Publish cmd requires a topic parameter.")
                     return None
                 msg = msg_dict.get('msg', None)
-                if topic is None:
+                if msg is None:
                     self.return_error("Publish cmd requires a message string in field 'msg'.")
                     return None
                 
@@ -563,6 +563,12 @@ class BrowserInteractorThread(threading.Thread):
                     err_msg = "Synchronous-publish did not receive a result within %s seconds." % str(timeout);
                     self.logErr(err_msg)
                     self.return_error(err_msg)
+                    return
+                except Exception as e:
+                    err_msg = "Synchronous publish encountered an error: %s" % `e`
+                    self.logErr(err_msg)
+                    self.return_error(err_msg)
+                    return
                 return {"resp" : "return",           # Msg to browser is response to prior synch-pub
                         "respId" : response_id,      # For browser to match result with prior synch-pub
                         "content" : result_content}  # Result of the synchronous call.

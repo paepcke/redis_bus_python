@@ -14,6 +14,7 @@ from redis_bus_python.redis_lib._compat import iteritems, iterkeys, \
 from redis_bus_python.redis_lib.connection import Connection
 
 from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError
+from tornado.gen import coroutine
 
 class PubSubListener(threading.Thread):
     """
@@ -510,6 +511,11 @@ class PubSubListener(threading.Thread):
         :type timeout: float
         :raise TimeoutError: if server does not send expected data.
         '''
+        
+        # Redis does not allow PUBLISH commands on any connection
+        # that is subscribed to at least one topic; so get one
+        # connection for subscribing, and another for publishing:
+        
         sub_unsub_conn = self.oneshot_connection_pool.get_connection()
         pub_conn = self.oneshot_connection_pool.get_connection()
         
@@ -531,21 +537,26 @@ class PubSubListener(threading.Thread):
             for _ in range(6):
                 sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
                         
-            # Publish the request:
+            # Publish the request; but here is a weird thing:
+            # If *****
             pub_conn.write_socket(publish_cmd)
             # Read number of recipients:
             pub_conn.read_int(block=True, timeout=timeout)
             
             # Read the service's response:
-            response_arr = sub_unsub_conn.parse_response(block=True, timeout=timeout)
-            
-            sub_unsub_conn.write_socket(unsubscribe_cmd)
-    
-            # Read and discard the returned status.
-            # Same expected return format as the subscribe above:
-    
-            for _ in range(6):
-                sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
+            try:
+                response_arr = sub_unsub_conn.parse_response(block=True, timeout=timeout)
+            finally:
+                # Make sure that we unsubscribe even if the
+                # response from the remote doesn't come (i.e. timeout):
+                
+                sub_unsub_conn.write_socket(unsubscribe_cmd)
+        
+                # Read and discard the returned status.
+                # Same expected return format as the subscribe above:
+        
+                for _ in range(6):
+                    sub_unsub_conn.readline(block=True, timeout=Connection.REDIS_RESPONSE_TIMEOUT)
             
             # The response_arr now has ['message', <channel>, <payload>].
             # Return the payload: 

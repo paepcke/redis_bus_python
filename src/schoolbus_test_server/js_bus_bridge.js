@@ -494,7 +494,8 @@ function busInteractor() {
 			//my.errCallback(str);
 			
 			// Callback with time and error string:
-			my.errCallback(argsObj);
+			var errorMsg = `${argsObj.time}: ${argsObj.content}`;
+			my.errCallback(errorMsg);
 			return;
 		}
 		// If we get here the server sent an unknown response
