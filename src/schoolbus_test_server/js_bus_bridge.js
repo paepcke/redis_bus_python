@@ -98,8 +98,7 @@ function busInteractor() {
 	my.MAX_CONNECT_WAIT_TIME = 2000 // 2 seconds
 	// How often to check whether the initial
 	// websocket connection has completed:
-	my.INTER_CHECK_CONNECT_TIME = 50 //
-	my.connectAttemptStartTime = 
+	my.INTER_CHECK_CONNECT_TIME = 50;
 	
 	my.keepAliveInterval = 15000; /* 15 sec*/
 	
@@ -182,7 +181,7 @@ function busInteractor() {
 	my.setMsgCallback = function(newMsgCallback) {
 		if (typeof newMsgCallback !== "function") {
 			throw "Call to setMsgCallback takes a function as argument; was passed an '" +
-				   typeof newMsgCallback + "'."
+				   typeof newMsgCallback + "'.";
 		}
 		my.msgCallback = newMsgCallback;
 	}
@@ -190,7 +189,7 @@ function busInteractor() {
 	my.setErrCallback = function(newErrCallback) {
 		if (typeof newErrCallback !== "function") {
 			throw "Call to setErrCallback takes a function as argument; was passed an '" +
-				   typeof newErrCallback + "'."
+				   typeof newErrCallback + "'.";
 		}
 		my.errCallback = newErrCallback;
 	}
@@ -277,7 +276,7 @@ function busInteractor() {
 			return
 		    }
 		    my.processServerResponse(argsObj);
-		}
+		};
 	}
 	
 	my.wsReady = function() {
@@ -325,7 +324,7 @@ function busInteractor() {
 		 */
 		// Callback will be invoked by processServerResponse().
 		my.respCallback = respCallback;
-		my.sendReq({"cmd" : "subscribed_to"})
+		my.sendReq({"cmd" : "subscribed_to"});
 	}
 	
 	my.publish = function(strOrObj, topic, syncOptions) {
@@ -391,7 +390,7 @@ function busInteractor() {
 		var timeout = syncOptions.timeout;
 		if (typeof timeout !== 'undefined') {
 			if (typeof timeout != 'number') {
-				throw `Timeout for synchronous-publish must be a number, was ${timeout}.` 
+				throw `Timeout for synchronous-publish must be a number, was ${timeout}.`;
 			}
 		}
 		uuid = my.generateUUID();
