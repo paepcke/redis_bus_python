@@ -14,7 +14,6 @@ from redis_bus_python.redis_lib._compat import iteritems, iterkeys, \
 from redis_bus_python.redis_lib.connection import Connection
 
 from redis_bus_python.redis_lib.exceptions import ConnectionError, TimeoutError
-from tornado.gen import coroutine
 
 class PubSubListener(threading.Thread):
     """

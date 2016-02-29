@@ -464,6 +464,9 @@ class BrowserInteractorThread(threading.Thread):
                 # Double check: another way to release
                 # the block of this queue is to feed it a '\0':
                 if msg_dict == '\0':
+                    self.browser_request_queue.task_done()
+                    if self.done:
+                        return
                     continue
             except Queue.Empty:
                 continue 
@@ -473,6 +476,7 @@ class BrowserInteractorThread(threading.Thread):
             # If a response to the browser is to be delivered, do that:
             if response_dict is not None and len(response_dict) > 0:
                 self.write_to_browser(json.dumps(response_dict))
+            self.browser_request_queue.task_done()
             continue
         return
         
