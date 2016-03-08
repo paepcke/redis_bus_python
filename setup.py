@@ -5,7 +5,7 @@ test_requirements = ['sentinels>=0.0.6', 'nose>=1.0', 'python-dateutil>=2.2']
 
 setup(
     name = "redis_bus_python",
-    version = "0.51",
+    version = "0.52",
     packages = find_packages('src'),
     package_dir = {'':'src'},
 
