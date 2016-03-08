@@ -45,9 +45,10 @@ if __name__ == '__main__':
     msg_file_writer = MsgFileWriter('studentAction')
     print('Starting SchoolBus message file writer: %s-message to file %s...' %\
           ('studentAction', '/tmp/msgFile.txt'))
-    try:
-        time.sleep(10)
-    except KeyboardInterrupt:
-        msg_file_writer.shutdown()
-        print('Exiting SchoolBus message file writer...')
-        sys.exit()
+    while True:
+        try:
+            time.sleep(10)
+        except KeyboardInterrupt:
+            msg_file_writer.shutdown()
+            print('Exiting SchoolBus message file writer...')
+            sys.exit()
